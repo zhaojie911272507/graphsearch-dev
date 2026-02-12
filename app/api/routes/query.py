@@ -7,13 +7,14 @@ and generates an answer via LLM with streaming.
 import json
 import logging
 import time
+from collections.abc import AsyncGenerator
 
 from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import StreamingResponse
 from langchain_openai import ChatOpenAI
 
 from app.api.dependencies import GraphRetrieverDep, SettingsDep
-from app.domain.schemas import QueryRequest, QueryResponse, RetrievalContext
+from app.domain.schemas import QueryRequest, QueryResponse
 from app.exceptions import GraphRAGError
 
 logger = logging.getLogger(__name__)
@@ -29,6 +30,7 @@ Always cite which chunks or entities informed your answer when possible."""
 
 @router.post(
     "",
+    response_model=None,
     summary="Query the knowledge graph",
     description="Hybrid retrieval (vector + graph) followed by LLM generation.",
 )
@@ -78,7 +80,7 @@ async def query_graph(
             streaming=True,
         )
 
-        async def stream_response() -> StreamingResponse:
+        async def stream_response() -> AsyncGenerator[str, None]:
             """Generator that streams SSE events."""
             # Send context first
             if request.include_sources:
