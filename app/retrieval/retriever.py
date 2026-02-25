@@ -44,25 +44,33 @@ class GraphRetriever:
         query: str,
         top_k: int = 10,
         traversal_depth: int = 2,
+        *,
+        vector_only: bool = False,
     ) -> RetrievalContext:
-        """Execute the full hybrid retrieval pipeline.
+        """Execute the retrieval pipeline.
 
         Args:
             query: Natural language query string.
             top_k: Number of chunks from vector search.
             traversal_depth: Graph traversal hops from seed chunks.
+            vector_only: If True, skip graph traversal (baseline mode).
 
         Returns:
-            Assembled RetrievalContext with chunks, entities, and relations.
+            Assembled RetrievalContext with chunks and optionally entities/relations.
         """
         start = time.monotonic()
 
         # Stage 1: Vector search
+        t0 = time.monotonic()
         query_vector = await self._embedder.embed_query(query)
+        embedding_ms = (time.monotonic() - t0) * 1000
+
+        t1 = time.monotonic()
         vector_results = await self._store.vector_search(
             query_vector=query_vector,
             top_k=top_k,
         )
+        vector_search_ms = (time.monotonic() - t1) * 1000
 
         chunks = self._parse_vector_results(vector_results)
 
@@ -70,22 +78,33 @@ class GraphRetriever:
             logger.info("Vector search returned no results for query: %s", query[:100])
             return RetrievalContext()
 
-        # Stage 2: Graph traversal
-        chunk_ids = [str(c.chunk_id) for c in chunks]
-        traversal_results = await self._store.traverse_from_chunks(
-            chunk_ids=chunk_ids,
-            depth=traversal_depth,
-        )
+        entities: list[RetrievedEntity] = []
+        relations: list[RetrievedRelation] = []
+        graph_traversal_ms = 0.0
 
-        entities, relations = self._parse_traversal_results(traversal_results)
+        # Stage 2: Graph traversal (skipped in vector_only mode)
+        if not vector_only:
+            chunk_ids = [str(c.chunk_id) for c in chunks]
+            t2 = time.monotonic()
+            traversal_results = await self._store.traverse_from_chunks(
+                chunk_ids=chunk_ids,
+                depth=traversal_depth,
+            )
+            graph_traversal_ms = (time.monotonic() - t2) * 1000
+            entities, relations = self._parse_traversal_results(traversal_results)
 
-        elapsed = (time.monotonic() - start) * 1000
+        total_ms = (time.monotonic() - start) * 1000
         logger.info(
-            "Retrieval completed in %.1fms: %d chunks, %d entities, %d relations",
-            elapsed,
+            "Retrieval completed in %.1fms (embed=%.1f, vec=%.1f, graph=%.1f): "
+            "%d chunks, %d entities, %d relations [mode=%s]",
+            total_ms,
+            embedding_ms,
+            vector_search_ms,
+            graph_traversal_ms,
             len(chunks),
             len(entities),
             len(relations),
+            "vector_only" if vector_only else "hybrid",
         )
 
         return RetrievalContext(

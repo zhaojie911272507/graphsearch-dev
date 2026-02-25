@@ -1,0 +1,109 @@
+{
+  "name": "graph_rag_golden_qa",
+  "description": "Golden Q&A dataset for Graph RAG evaluation (PRD §9.3). Structure: [question, expected_answer, expected_contexts]. Initial seed set — expand to >=100 cases via `python -m scripts.run_evaluation generate` and SME review.",
+  "cases": [
+    {
+      "question": "What is Graph RAG and how does it differ from traditional RAG?",
+      "expected_answer": "Graph RAG (Graph Retrieval-Augmented Generation) combines vector similarity search with knowledge graph traversal to provide richer context for LLM generation. Unlike traditional RAG which only retrieves text chunks via embedding similarity, Graph RAG also discovers related entities, concepts, and their relationships through graph traversal, enabling better multi-hop reasoning and cross-document context assembly.",
+      "expected_contexts": [
+        "Graph RAG combines vector search with knowledge graphs to enhance retrieval-augmented generation.",
+        "Traditional RAG uses only vector similarity to find relevant text chunks, missing structural relationships between concepts."
+      ],
+      "category": "conceptual",
+      "difficulty": "easy"
+    },
+    {
+      "question": "How does the hybrid retrieval pipeline work step by step?",
+      "expected_answer": "The hybrid retrieval pipeline has three stages: (1) Vector Search - the query is embedded using M3E-Large and matched against chunk embeddings via Neo4j vector index to get Top-K chunks; (2) Graph Traversal - starting from the seed chunks, the system traverses 1-2 hops outward to discover related Entity and Concept nodes; (3) Context Assembly - retrieved chunks, entities, and graph relations are formatted into structured context for the LLM.",
+      "expected_contexts": [
+        "Stage 1: Embed query using local M3E-Large model, then perform vector similarity search via Neo4j vector index to retrieve Top-K chunks.",
+        "Stage 2: Graph traversal from seed chunks to discover related Entity and Concept nodes within 1-2 hops.",
+        "Stage 3: Context assembly combines retrieved text chunks and graph relationships into formatted context for LLM generation."
+      ],
+      "category": "architecture",
+      "difficulty": "medium"
+    },
+    {
+      "question": "What entity types does the system extract from documents?",
+      "expected_answer": "The system extracts the following entity types: PERSON, ORGANIZATION (ORG), LOCATION, EVENT, TECHNOLOGY, PRODUCT, DATE, and OTHER. These are defined as strict enumerations in the domain model and used by the LLM extraction pipeline to classify named entities.",
+      "expected_contexts": [
+        "Entity types defined as StrEnum: PERSON, ORG, LOCATION, EVENT, TECHNOLOGY, PRODUCT, DATE, OTHER.",
+        "The GraphExtractor uses LLM with JSON Mode to extract entities matching these predefined types."
+      ],
+      "category": "schema",
+      "difficulty": "easy"
+    },
+    {
+      "question": "What relationship types exist between nodes in the knowledge graph?",
+      "expected_answer": "The system defines five relationship types: HAS_CHUNK (Document to Chunk), MENTIONS (Chunk to Entity), RELATED_TO (between entities/concepts), BELONGS_TO (membership/containment), and DEFINES (concept definitions). All relationships are directed, carry a weight property between 0.0 and 1.0, and enforce self-loop prevention.",
+      "expected_contexts": [
+        "Relationship types: HAS_CHUNK, MENTIONS, RELATED_TO, BELONGS_TO, DEFINES.",
+        "All relationships are directed with weight property in [0.0, 1.0] and self-loop prevention via model validator."
+      ],
+      "category": "schema",
+      "difficulty": "medium"
+    },
+    {
+      "question": "How does the system handle LLM extraction failures?",
+      "expected_answer": "The system implements a retry-with-graceful-degradation strategy. Each chunk extraction attempt uses tenacity with 1 initial try + 2 retries with exponential backoff (1s to 10s). If all retries are exhausted, instead of propagating the exception, the system returns an empty ExtractionResult for that chunk, allowing the overall pipeline to continue processing other chunks.",
+      "expected_contexts": [
+        "Retry strategy uses tenacity: 1 initial attempt + 2 retries with exponential backoff (min 1s, max 10s).",
+        "On exhausted retries, returns empty ExtractionResult instead of raising — graceful degradation."
+      ],
+      "category": "reliability",
+      "difficulty": "medium"
+    },
+    {
+      "question": "What is the embedding dimension used by M3E-Large and how is it validated?",
+      "expected_answer": "M3E-Large outputs 1024-dimensional vectors. The dimension is validated at multiple levels: (1) at model load time, the actual model dimension is compared against the configured value; (2) at runtime, every batch of embedding outputs is checked for correct dimension; (3) the ChunkNode Pydantic model has a field validator that rejects embeddings with dimensions other than 1024.",
+      "expected_contexts": [
+        "M3E-Large produces 1024-dimensional embedding vectors.",
+        "Dimension validated at model load time, runtime batch check, and ChunkNode field validator."
+      ],
+      "category": "architecture",
+      "difficulty": "medium"
+    },
+    {
+      "question": "Explain the connection between Document, Chunk, Entity and Concept nodes in the graph schema.",
+      "expected_answer": "Documents are the top-level nodes representing ingested source material. Each Document is split into multiple Chunks via HAS_CHUNK relationships. Chunks carry the actual text content and embedding vectors. Through LLM extraction, Chunks are linked to Entity nodes (named entities like people, organizations) via MENTIONS relationships. Entities and Concepts can be interconnected via RELATED_TO, BELONGS_TO, and DEFINES relationships, forming a rich knowledge graph that enables multi-hop traversal from any chunk.",
+      "expected_contexts": [
+        "Document nodes are split into Chunk nodes via HAS_CHUNK relationships.",
+        "Chunks carry text content and embedding vectors, linked to Entity nodes via MENTIONS.",
+        "Entities and Concepts interconnected via RELATED_TO, BELONGS_TO, DEFINES for multi-hop traversal."
+      ],
+      "category": "schema",
+      "difficulty": "hard"
+    },
+    {
+      "question": "How does the Neo4j adapter ensure data idempotency during ingestion?",
+      "expected_answer": "The Neo4j adapter uses MERGE instead of CREATE for all node and relationship writes. MERGE checks for existing nodes/relationships by their unique ID before creating new ones, preventing duplicates. Additionally, batch writes use UNWIND for high throughput, and uniqueness constraints are created on node IDs during index initialization to enforce data integrity at the database level.",
+      "expected_contexts": [
+        "Uses MERGE instead of CREATE for idempotent writes — prevents duplicate nodes and relationships.",
+        "Batch writes use UNWIND for throughput, uniqueness constraints enforced on node IDs."
+      ],
+      "category": "reliability",
+      "difficulty": "medium"
+    },
+    {
+      "question": "What concurrency controls does the extraction pipeline use?",
+      "expected_answer": "The extraction pipeline uses asyncio.Semaphore to limit concurrent LLM calls, with the max concurrency configurable via EXTRACTION_MAX_CONCURRENCY (default 5). Chunks are processed in parallel using asyncio.gather, but the semaphore ensures no more than the configured number of LLM requests are in-flight simultaneously, preventing API rate limit issues.",
+      "expected_contexts": [
+        "asyncio.Semaphore limits concurrent LLM calls, configurable via EXTRACTION_MAX_CONCURRENCY (default 5).",
+        "Chunks processed in parallel with asyncio.gather, bounded by semaphore."
+      ],
+      "category": "architecture",
+      "difficulty": "hard"
+    },
+    {
+      "question": "How does graph traversal depth affect the retrieval results?",
+      "expected_answer": "Graph traversal depth (1-5 hops, default 2) determines how far from the initial seed chunks the system explores. A depth of 1 only discovers entities directly connected to chunks. A depth of 2 also finds entities connected to those entities, capturing second-order relationships. Greater depth provides richer context but increases latency and may introduce noise from loosely related nodes. The traversal is limited to 50 results per expansion to bound response size.",
+      "expected_contexts": [
+        "Traversal depth 1-5 hops (default 2) controls exploration radius from seed chunks.",
+        "Deeper traversal captures second-order relationships but increases latency and noise.",
+        "Traversal limited to 50 results per expansion to bound response size."
+      ],
+      "category": "architecture",
+      "difficulty": "hard"
+    }
+  ]
+}

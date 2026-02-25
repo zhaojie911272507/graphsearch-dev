@@ -1,0 +1,119 @@
+# PRD §9.4 — CI/CD automated evaluation
+# Triggers on PRs that touch core retrieval/embedding/persistence logic.
+name: RAG Evaluation Suite
+
+on:
+  pull_request:
+    paths:
+      - "app/retrieval/**"
+      - "app/persistence/**"
+      - "app/embedding/**"
+      - "app/extraction/**"
+      - "app/evaluation/**"
+      - "eval_datasets/**"
+
+  workflow_dispatch:
+    inputs:
+      dataset:
+        description: "Path to evaluation dataset JSON"
+        default: "eval_datasets/golden_qa.json"
+      top_k:
+        description: "Vector search top-K"
+        default: "10"
+      depth:
+        description: "Graph traversal depth"
+        default: "2"
+
+env:
+  PYTHON_VERSION: "3.13"
+
+jobs:
+  evaluation:
+    name: Run Ablation Study
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      neo4j:
+        image: neo4j:5-community
+        env:
+          NEO4J_AUTH: neo4j/testpassword
+          NEO4J_PLUGINS: '["apoc"]'
+        ports:
+          - 7687:7687
+          - 7474:7474
+        options: >-
+          --health-cmd "cypher-shell -u neo4j -p testpassword 'RETURN 1'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run evaluation suite
+        env:
+          NEO4J_URI: bolt://localhost:7687
+          NEO4J_USERNAME: neo4j
+          NEO4J_PASSWORD: testpassword
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL || 'https://api.openai.com/v1' }}
+          LANGCHAIN_TRACING_V2: "true"
+          LANGCHAIN_API_KEY: ${{ secrets.LANGCHAIN_API_KEY }}
+          LANGCHAIN_PROJECT: graph-rag-eval-ci
+        run: |
+          python -m scripts.run_evaluation \
+            --dataset ${{ github.event.inputs.dataset || 'eval_datasets/golden_qa.json' }} \
+            --top-k ${{ github.event.inputs.top_k || '10' }} \
+            --depth ${{ github.event.inputs.depth || '2' }} \
+            --output-dir eval_results
+
+      - name: Upload evaluation report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: evaluation-report
+          path: eval_results/
+          retention-days: 90
+
+      - name: Post results to PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const files = fs.readdirSync('eval_results').filter(f => f.endsWith('.json'));
+            if (files.length === 0) return;
+
+            const report = JSON.parse(fs.readFileSync(`eval_results/${files[0]}`, 'utf8'));
+            const vo = report.vector_only;
+            const hy = report.hybrid;
+
+            const body = `## 📊 RAG Evaluation Report
+
+            | Metric | Vector Only | Hybrid | Δ |
+            |--------|------------|--------|---|
+            | Context Precision | ${vo.avg_context_precision.toFixed(4)} | ${hy.avg_context_precision.toFixed(4)} | ${(hy.avg_context_precision - vo.avg_context_precision > 0 ? '+' : '')}${(hy.avg_context_precision - vo.avg_context_precision).toFixed(4)} |
+            | Context Recall | ${vo.avg_context_recall.toFixed(4)} | ${hy.avg_context_recall.toFixed(4)} | ${(hy.avg_context_recall - vo.avg_context_recall > 0 ? '+' : '')}${(hy.avg_context_recall - vo.avg_context_recall).toFixed(4)} |
+            | Faithfulness | ${vo.avg_faithfulness.toFixed(4)} | ${hy.avg_faithfulness.toFixed(4)} | ${(hy.avg_faithfulness - vo.avg_faithfulness > 0 ? '+' : '')}${(hy.avg_faithfulness - vo.avg_faithfulness).toFixed(4)} |
+            | Answer Relevance | ${vo.avg_answer_relevance.toFixed(4)} | ${hy.avg_answer_relevance.toFixed(4)} | ${(hy.avg_answer_relevance - vo.avg_answer_relevance > 0 ? '+' : '')}${(hy.avg_answer_relevance - vo.avg_answer_relevance).toFixed(4)} |
+            | Retrieval Latency P50 | ${vo.retrieval_latency.p50_ms.toFixed(1)}ms | ${hy.retrieval_latency.p50_ms.toFixed(1)}ms | ${(hy.retrieval_latency.p50_ms - vo.retrieval_latency.p50_ms > 0 ? '+' : '')}${(hy.retrieval_latency.p50_ms - vo.retrieval_latency.p50_ms).toFixed(1)}ms |
+
+            *Dataset: ${report.dataset_name} (${vo.num_queries} queries)*`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
