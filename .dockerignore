@@ -1,0 +1,50 @@
+# Version control
+.git
+.gitignore
+
+# Python artifacts
+__pycache__
+*.py[cod]
+*.egg-info
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv
+venv
+env
+
+# IDE / Editor
+.vscode
+.cursor
+.idea
+*.swp
+*.swo
+
+# Testing & CI
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+htmlcov/
+tests/
+
+# Environment files (secrets injected at runtime)
+.env
+.env.local
+
+# Docker (prevent recursive context)
+Dockerfile
+docker-compose*.yml
+
+# Model files (mounted as volume, not baked into image)
+model_files/
+
+# Documentation
+*.md
+LICENSE
+
+# OS artifacts
+.DS_Store
+Thumbs.db
