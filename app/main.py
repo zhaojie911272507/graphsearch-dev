@@ -12,8 +12,10 @@ from contextlib import asynccontextmanager
 import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 
 from app.api.routes import ingest, query
+from app.visualization.routes import router as viz_router
 from app.config import Settings, get_settings
 from app.domain.schemas import HealthResponse
 from app.embedding.service import EmbeddingService
@@ -125,9 +127,16 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    # Root redirect to visualization
+    @app.get("/", include_in_schema=False)
+    async def root() -> RedirectResponse:
+        """Redirect root to the graph visualization frontend."""
+        return RedirectResponse(url="/viz/", status_code=302)
+
     # Mount routes
     app.include_router(ingest.router, prefix="/api/v1")
     app.include_router(query.router, prefix="/api/v1")
+    app.include_router(viz_router)
 
     # Health endpoint
     @app.get("/health", response_model=HealthResponse, tags=["System"])

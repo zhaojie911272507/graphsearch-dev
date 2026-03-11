@@ -130,6 +130,23 @@ CALL {
 RETURN DISTINCT neighbor, rels
 """
 
+# Visualization: subgraph for frontend (edges imply nodes)
+_GRAPH_FOR_VIZ = """
+MATCH (n)-[r]->(m)
+WHERE (n:Document OR n:Chunk OR n:Entity OR n:Concept)
+  AND (m:Document OR m:Chunk OR m:Entity OR m:Concept)
+WITH n, r, m
+LIMIT $limit
+RETURN n, type(r) AS rel_type, r.weight AS weight, m
+"""
+
+_GRAPH_STATS = """
+MATCH (n)
+WHERE n:Document OR n:Chunk OR n:Entity OR n:Concept
+WITH labels(n)[0] AS lbl, count(n) AS cnt
+RETURN lbl, cnt
+"""
+
 
 class GraphStore:
     """Async Neo4j graph store with connection lifecycle management.
@@ -378,6 +395,117 @@ class GraphStore:
                     f"Graph traversal failed: {exc}",
                     details={"chunk_ids": chunk_ids, "depth": depth},
                 ) from exc
+
+    # ──────────────────────────────────────────
+    # Visualization
+    # ──────────────────────────────────────────
+
+    async def get_graph_for_visualization(
+        self,
+        limit: int = 500,
+    ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+        """Fetch a subgraph for visualization (nodes and edges).
+
+        Returns connected node-edge pairs. Nodes are deduplicated by ID;
+        edges include source, target, relation_type, and weight.
+
+        Args:
+            limit: Maximum number of relationships to fetch (default 500).
+
+        Returns:
+            Tuple of (nodes_list, edges_list). Each node dict has id, label,
+            title, content_preview. Each edge dict has source, target,
+            relation_type, weight.
+        """
+        async with self.driver.session(database=self._settings.database) as session:
+            try:
+                result = await session.run(
+                    _GRAPH_FOR_VIZ,
+                    limit=limit,
+                )
+                nodes_map: dict[str, dict[str, object]] = {}
+                edges: list[dict[str, object]] = []
+
+                def _to_viz_node(node: object) -> dict[str, object]:
+                    """Convert Neo4j Node to visualization node dict."""
+                    nid = str(node.get("id", "")) if hasattr(node, "get") else ""
+                    labels_list = list(node.labels) if hasattr(node, "labels") else ["Unknown"]
+                    label = labels_list[0] if labels_list else "Unknown"
+
+                    title = ""
+                    preview = ""
+                    if label == "Document":
+                        title = str(node.get("title") or nid[:8])
+                    elif label == "Chunk":
+                        content = str(node.get("content") or "")
+                        preview = (content[:200] + "…") if len(content) > 200 else content
+                        title = f"Chunk #{node.get('chunk_index', '?')}"
+                    elif label == "Entity":
+                        title = str(node.get("name") or nid[:8])
+                        preview = str(node.get("description") or "")
+                    elif label == "Concept":
+                        title = str(node.get("name") or nid[:8])
+                        preview = str(node.get("definition") or "")
+
+                    return {
+                        "id": nid,
+                        "label": label,
+                        "title": title or nid[:8],
+                        "content_preview": (preview[:200] + "…") if len(preview) > 200 else preview,
+                    }
+
+                async for record in result:
+                    n = record["n"]
+                    m = record["m"]
+                    rel_type = record["rel_type"]
+                    weight = record["weight"] or 1.0
+
+                    for node_obj in (n, m):
+                        nd = _to_viz_node(node_obj)
+                        nodes_map[nd["id"]] = nd
+
+                    sid = str(n.get("id", ""))
+                    tid = str(m.get("id", ""))
+                    edges.append({
+                        "source": sid,
+                        "target": tid,
+                        "relation_type": rel_type,
+                        "weight": float(weight),
+                    })
+
+                return (list(nodes_map.values()), edges)
+            except Exception as exc:
+                raise Neo4jQueryError(
+                    f"Graph visualization query failed: {exc}",
+                    details={"limit": limit},
+                ) from exc
+
+    async def get_graph_stats(self) -> dict[str, int]:
+        """Return node counts by label and total relationship count.
+
+        Returns:
+            Dict with keys: Document, Chunk, Entity, Concept, and optionally
+            relationship_count (from a separate query).
+        """
+        stats: dict[str, int] = {
+            "Document": 0,
+            "Chunk": 0,
+            "Entity": 0,
+            "Concept": 0,
+        }
+        async with self.driver.session(database=self._settings.database) as session:
+            try:
+                result = await session.run(_GRAPH_STATS)
+                async for record in result:
+                    lbl = record["lbl"]
+                    cnt = record["cnt"]
+                    if lbl in stats:
+                        stats[lbl] = cnt
+            except Exception as exc:
+                raise Neo4jQueryError(
+                    f"Graph stats query failed: {exc}",
+                ) from exc
+        return stats
 
     # ──────────────────────────────────────────
     # Health Check
