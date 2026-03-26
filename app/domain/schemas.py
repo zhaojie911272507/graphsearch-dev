@@ -26,6 +26,7 @@ class IngestRequest(BaseModel):
     content: str = Field(..., min_length=1, description="Raw document text")
     source_url: str = Field(default="", examples=["https://example.com/report.pdf"])
     tags: list[str] = Field(default_factory=list)
+    domain_key: str | None = Field(default=None, description="Domain context for extraction")
 
 
 class IngestResponse(BaseModel):

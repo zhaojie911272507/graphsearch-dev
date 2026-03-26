@@ -248,6 +248,28 @@ FOR (p:PromptTemplate)
 ON (p.created_at);
 """
 
+_CREATE_DOMAIN_INDEXES = """
+CREATE CONSTRAINT domain_key_unique IF NOT EXISTS
+FOR (d:Domain)
+REQUIRE d.domain_key IS UNIQUE;
+
+CREATE INDEX domain_name_idx IF NOT EXISTS
+FOR (d:Domain)
+ON (d.name);
+
+CREATE INDEX domain_active_idx IF NOT EXISTS
+FOR (d:Domain)
+ON (d.is_active);
+
+CREATE INDEX entity_type_domain_idx IF NOT EXISTS
+FOR (e:OntologyEntityType)
+ON (e.domain_key);
+
+CREATE INDEX relation_type_domain_idx IF NOT EXISTS
+FOR (r:OntologyRelationType)
+ON (r.domain_key);
+"""
+
 _ALL_INDEXES = [
     _CREATE_ANNOTATION_INDEXES,
     _CREATE_VOTE_INDEXES,
@@ -255,6 +277,7 @@ _ALL_INDEXES = [
     _CREATE_EVALUATION_INDEXES,
     _CREATE_PIPELINE_INDEXES,
     _CREATE_PROMPT_INDEXES,
+    _CREATE_DOMAIN_INDEXES,
 ]
 
 
@@ -1090,6 +1113,320 @@ class GraphStore:
                 return types
             except Exception as exc:
                 raise Neo4jQueryError(f"Failed to get entity types: {exc}") from exc
+
+    # ──────────────────────────────────────────
+    # Domain Management
+    # ──────────────────────────────────────────
+
+    async def create_domain(
+        self,
+        domain_key: str,
+        name: str,
+        description: str = "",
+        extraction_prompt_template: str = "",
+        parent_domain_key: str | None = None,
+        inherits_base_ontology: bool = True,
+        created_by: str = "system",
+    ) -> dict[str, object]:
+        """Create a new domain."""
+        import uuid
+        from datetime import datetime
+
+        async with self.driver.session(database=self._settings.database) as session:
+            domain_id = str(uuid.uuid4())
+            now = datetime.utcnow().isoformat()
+
+            query = """
+            CREATE (d:Domain {
+                id: $id,
+                domain_key: $domain_key,
+                name: $name,
+                description: $description,
+                extraction_prompt_template: $extraction_prompt_template,
+                parent_domain_key: $parent_domain_key,
+                inherits_base_ontology: $inherits_base_ontology,
+                created_by: $created_by,
+                version: "1.0.0",
+                is_active: true,
+                created_at: $now,
+                updated_at: $now,
+                entity_types: [],
+                relation_types: []
+            })
+            RETURN d
+            """
+
+            try:
+                result = await session.run(
+                    query,
+                    id=domain_id,
+                    domain_key=domain_key,
+                    name=name,
+                    description=description,
+                    extraction_prompt_template=extraction_prompt_template,
+                    parent_domain_key=parent_domain_key,
+                    inherits_base_ontology=inherits_base_ontology,
+                    created_by=created_by,
+                    now=now,
+                )
+                record = await result.single()
+                return dict(record["d"]) if record else {}
+            except Exception as exc:
+                raise Neo4jQueryError(f"Failed to create domain: {exc}") from exc
+
+    async def get_domain_by_key(self, domain_key: str) -> dict[str, object] | None:
+        """Get domain by key."""
+        async with self.driver.session(database=self._settings.database) as session:
+            query = """
+            MATCH (d:Domain {domain_key: $domain_key})
+            RETURN d
+            """
+            try:
+                result = await session.run(query, domain_key=domain_key)
+                record = await result.single()
+                return dict(record["d"]) if record else None
+            except Exception as exc:
+                raise Neo4jQueryError(f"Failed to get domain: {exc}") from exc
+
+    async def list_domains(self, include_inactive: bool = False) -> list[dict[str, object]]:
+        """List all domains."""
+        async with self.driver.session(database=self._settings.database) as session:
+            where_clause = "" if include_inactive else "WHERE d.is_active = true"
+
+            query = f"""
+            MATCH (d:Domain)
+            {where_clause}
+            RETURN d
+            ORDER BY d.created_at DESC
+            """
+
+            try:
+                result = await session.run(query)
+                domains = []
+                async for record in result:
+                    domains.append(dict(record["d"]))
+                return domains
+            except Exception as exc:
+                raise Neo4jQueryError(f"Failed to list domains: {exc}") from exc
+
+    async def update_domain(
+        self,
+        domain_key: str,
+        **update_data: object,
+    ) -> dict[str, object]:
+        """Update a domain."""
+        from datetime import datetime
+
+        async with self.driver.session(database=self._settings.database) as session:
+            set_clauses = ["d.updated_at = $updated_at"]
+            params: dict[str, object] = {
+                "domain_key": domain_key,
+                "updated_at": datetime.utcnow().isoformat(),
+            }
+
+            for key, value in update_data.items():
+                set_clauses.append(f"d.{key} = ${key}")
+                params[key] = value
+
+            set_str = ", ".join(set_clauses)
+
+            query = f"""
+            MATCH (d:Domain {{domain_key: $domain_key}})
+            SET {set_str}
+            RETURN d
+            """
+
+            try:
+                result = await session.run(query, **params)
+                record = await result.single()
+                return dict(record["d"]) if record else {}
+            except Exception as exc:
+                raise Neo4jQueryError(f"Failed to update domain: {exc}") from exc
+
+    async def delete_domain(self, domain_key: str) -> bool:
+        """Delete a domain."""
+        async with self.driver.session(database=self._settings.database) as session:
+            query = """
+            MATCH (d:Domain {domain_key: $domain_key})
+            DETACH DELETE d
+            RETURN count(d) as deleted
+            """
+            try:
+                result = await session.run(query, domain_key=domain_key)
+                record = await result.single()
+                return record["deleted"] > 0 if record else False
+            except Exception as exc:
+                raise Neo4jQueryError(f"Failed to delete domain: {exc}") from exc
+
+    async def activate_domain(self, domain_key: str) -> bool:
+        """Activate a domain and deactivate others."""
+        from datetime import datetime
+
+        async with self.driver.session(database=self._settings.database) as session:
+            now = datetime.utcnow().isoformat()
+
+            # Deactivate all domains
+            deactivate_query = """
+            MATCH (d:Domain)
+            SET d.is_active = false, d.updated_at = $now
+            """
+            await session.run(deactivate_query, now=now)
+
+            # Activate the specified domain
+            activate_query = """
+            MATCH (d:Domain {domain_key: $domain_key})
+            SET d.is_active = true, d.updated_at = $now
+            RETURN d
+            """
+            try:
+                result = await session.run(activate_query, domain_key=domain_key, now=now)
+                record = await result.single()
+                return record is not None
+            except Exception as exc:
+                raise Neo4jQueryError(f"Failed to activate domain: {exc}") from exc
+
+    async def get_active_domain(self) -> dict[str, object] | None:
+        """Get the currently active domain."""
+        async with self.driver.session(database=self._settings.database) as session:
+            query = """
+            MATCH (d:Domain {is_active: true})
+            RETURN d
+            LIMIT 1
+            """
+            try:
+                result = await session.run(query)
+                record = await result.single()
+                return dict(record["d"]) if record else None
+            except Exception as exc:
+                raise Neo4jQueryError(f"Failed to get active domain: {exc}") from exc
+
+    async def get_domain_entity_types(self, domain_key: str) -> list[dict[str, object]]:
+        """Get entity types belonging to a domain."""
+        async with self.driver.session(database=self._settings.database) as session:
+            query = """
+            MATCH (t:OntologyEntityType {domain_key: $domain_key})
+            RETURN t
+            ORDER BY t.name ASC
+            """
+            try:
+                result = await session.run(query, domain_key=domain_key)
+                types = []
+                async for record in result:
+                    types.append(dict(record["t"]))
+                return types
+            except Exception as exc:
+                raise Neo4jQueryError(f"Failed to get domain entity types: {exc}") from exc
+
+    async def get_domain_relation_types(self, domain_key: str) -> list[dict[str, object]]:
+        """Get relation types belonging to a domain."""
+        async with self.driver.session(database=self._settings.database) as session:
+            query = """
+            MATCH (t:OntologyRelationType {domain_key: $domain_key})
+            RETURN t
+            ORDER BY t.name ASC
+            """
+            try:
+                result = await session.run(query, domain_key=domain_key)
+                types = []
+                async for record in result:
+                    types.append(dict(record["t"]))
+                return types
+            except Exception as exc:
+                raise Neo4jQueryError(f"Failed to get domain relation types: {exc}") from exc
+
+    async def get_domain_inheritance_chain(self, domain_key: str) -> list[dict[str, object]]:
+        """Get the inheritance chain for a domain."""
+        async with self.driver.session(database=self._settings.database) as session:
+            query = """
+            MATCH path = (d:Domain {domain_key: $domain_key})-[:EXTENDS*0..]->(parent:Domain)
+            RETURN nodes(path) as chain
+            """
+            try:
+                result = await session.run(query, domain_key=domain_key)
+                record = await result.single()
+                if record and record["chain"]:
+                    return [dict(node) for node in record["chain"]]
+                return []
+            except Exception as exc:
+                raise Neo4jQueryError(f"Failed to get domain inheritance chain: {exc}") from exc
+
+    async def add_entity_type_to_domain(self, domain_key: str, entity_type_name: str) -> bool:
+        """Add an entity type to a domain."""
+        async with self.driver.session(database=self._settings.database) as session:
+            query = """
+            MATCH (d:Domain {domain_key: $domain_key})
+            MATCH (t:OntologyEntityType {name: $entity_type_name})
+            SET t.domain_key = $domain_key
+            RETURN t
+            """
+            try:
+                result = await session.run(
+                    query,
+                    domain_key=domain_key,
+                    entity_type_name=entity_type_name,
+                )
+                record = await result.single()
+                return record is not None
+            except Exception as exc:
+                raise Neo4jQueryError(f"Failed to add entity type to domain: {exc}") from exc
+
+    async def add_relation_type_to_domain(self, domain_key: str, relation_type_name: str) -> bool:
+        """Add a relation type to a domain."""
+        async with self.driver.session(database=self._settings.database) as session:
+            query = """
+            MATCH (d:Domain {domain_key: $domain_key})
+            MATCH (t:OntologyRelationType {name: $relation_type_name})
+            SET t.domain_key = $domain_key
+            RETURN t
+            """
+            try:
+                result = await session.run(
+                    query,
+                    domain_key=domain_key,
+                    relation_type_name=relation_type_name,
+                )
+                record = await result.single()
+                return record is not None
+            except Exception as exc:
+                raise Neo4jQueryError(f"Failed to add relation type to domain: {exc}") from exc
+
+    async def remove_entity_type_from_domain(self, domain_key: str, entity_type_name: str) -> bool:
+        """Remove an entity type from a domain."""
+        async with self.driver.session(database=self._settings.database) as session:
+            query = """
+            MATCH (t:OntologyEntityType {name: $entity_type_name, domain_key: $domain_key})
+            REMOVE t.domain_key
+            RETURN t
+            """
+            try:
+                result = await session.run(
+                    query,
+                    domain_key=domain_key,
+                    entity_type_name=entity_type_name,
+                )
+                record = await result.single()
+                return record is not None
+            except Exception as exc:
+                raise Neo4jQueryError(f"Failed to remove entity type from domain: {exc}") from exc
+
+    async def remove_relation_type_from_domain(self, domain_key: str, relation_type_name: str) -> bool:
+        """Remove a relation type from a domain."""
+        async with self.driver.session(database=self._settings.database) as session:
+            query = """
+            MATCH (t:OntologyRelationType {name: $relation_type_name, domain_key: $domain_key})
+            REMOVE t.domain_key
+            RETURN t
+            """
+            try:
+                result = await session.run(
+                    query,
+                    domain_key=domain_key,
+                    relation_type_name=relation_type_name,
+                )
+                record = await result.single()
+                return record is not None
+            except Exception as exc:
+                raise Neo4jQueryError(f"Failed to remove relation type from domain: {exc}") from exc
 
     async def get_entity_type_by_name(self, name: str) -> dict[str, object] | None:
         """Get entity type by name."""

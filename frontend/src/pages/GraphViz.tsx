@@ -26,7 +26,8 @@ export function GraphViz() {
 
   const { data, isLoading } = useQuery({
     queryKey: ['graphViz'],
-    queryFn: () => graphVizApi.getGraph({ limit: 100 }).then(res => res.data),
+    queryFn: () =>
+      graphVizApi.getGraph({ limit: 100 }).then((res) => res.data as GraphVizData),
   })
 
   useEffect(() => {
@@ -78,7 +79,7 @@ export function GraphViz() {
         {
           selector: 'node[type="Chunk"]',
           style: {
-            'shape': 'circle',
+            'shape': 'ellipse',
             'background-color': '#6b7280',
             'border-color': '#4b5563',
           },
@@ -93,7 +94,7 @@ export function GraphViz() {
             'curve-style': 'bezier',
             'label': 'data(label)',
             'text-background-color': '#1f2937',
-            'text-background-opacity': '0.8',
+            'text-background-opacity': 0.8,
             'text-background-shape': 'rectangle',
             'color': '#f3f4f6',
             'font-size': '8px',
