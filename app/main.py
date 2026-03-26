@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 
 from app.api.routes import ingest, query
+from app.api.routes import metadata, ontology, intelligence, evaluation, domains
 from app.visualization.routes import router as viz_router
 from app.config import Settings, get_settings
 from app.domain.schemas import HealthResponse
@@ -136,6 +137,11 @@ def create_app() -> FastAPI:
     # Mount routes
     app.include_router(ingest.router, prefix="/api/v1")
     app.include_router(query.router, prefix="/api/v1")
+    app.include_router(metadata.router, prefix="/api/v1")
+    app.include_router(ontology.router, prefix="/api/v1")
+    app.include_router(intelligence.router, prefix="/api/v1")
+    app.include_router(evaluation.router, prefix="/api/v1")
+    app.include_router(domains.router, prefix="/api/v1")
     app.include_router(viz_router)
 
     # Health endpoint

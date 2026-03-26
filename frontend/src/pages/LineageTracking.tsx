@@ -1,9 +1,10 @@
-import { useCallback, useMemo } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import ReactFlow, {
   ReactFlowProvider,
   MiniMap,
   Controls,
   Background,
+  BackgroundVariant,
   useNodesState,
   useEdgesState,
   Node,
@@ -15,16 +16,10 @@ import { assetApi } from '@/lib/api'
 import { useParams } from 'react-router-dom'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
-import { Badge } from '@/components/ui/Badge'
 import { ArrowLeft, GitBranch } from 'lucide-react'
 import { Link } from 'react-router-dom'
 
 type LineageDirection = 'upstream' | 'downstream' | 'both'
-
-interface LineageData {
-  upstream: any[]
-  downstream: any[]
-}
 
 function LineageFlow() {
   const { nodeId } = useParams<{ nodeId: string }>()
@@ -69,7 +64,7 @@ function LineageFlow() {
     }
   }, [])
 
-  useMemo(() => {
+  useEffect(() => {
     if (!data) return
 
     const newNodes: Node[] = []
@@ -224,7 +219,7 @@ function LineageFlow() {
           >
             <Controls />
             <MiniMap />
-            <Background variant="dots" gap={12} size={1} />
+            <Background variant={BackgroundVariant.Dots} gap={12} size={1} />
           </ReactFlow>
         </CardContent>
       </Card>

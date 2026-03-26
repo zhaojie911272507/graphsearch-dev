@@ -54,6 +54,13 @@ async def ingest_document(
     start = time.monotonic()
 
     try:
+        # Get domain context if specified
+        domain_context = None
+        if request.domain_key:
+            domain = await store.get_domain_by_key(request.domain_key)
+            if domain:
+                domain_context = domain
+
         # 1. Create document node
         content_hash = hashlib.sha256(request.content.encode()).hexdigest()
         doc_node = DocumentNode(
@@ -85,6 +92,7 @@ async def ingest_document(
             embedded_chunks.append(embedded_chunk)
 
         # 4. Extract entities/concepts/relationships via LLM
+        # TODO: Pass domain_context to extractor for domain-specific extraction
         extraction_results = await extractor.extract_from_chunks(embedded_chunks)
 
         # 5. Aggregate all nodes and relationships

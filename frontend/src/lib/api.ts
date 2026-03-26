@@ -106,3 +106,49 @@ export const graphVizApi = {
   getGraph: (params?: { limit?: number }) =>
     api.get('/metadata/graph-viz', { params: { limit: params?.limit || 100 } }),
 }
+
+// Domain Management APIs
+export const domainApi = {
+  list: (include_inactive?: boolean) =>
+    api.get('/domains', { params: { include_inactive } }),
+
+  get: (domainKey: string) =>
+    api.get(`/domains/${domainKey}`),
+
+  create: (data: {
+    domain_key: string
+    name: string
+    description?: string
+    extraction_prompt_template?: string
+    parent_domain_key?: string | null
+    inherits_base_ontology?: boolean
+  }) =>
+    api.post('/domains', data),
+
+  update: (domainKey: string, data: Partial<{
+    name: string
+    description: string
+    extraction_prompt_template: string
+    parent_domain_key: string | null
+    inherits_base_ontology: boolean
+  }>) =>
+    api.put(`/domains/${domainKey}`, data),
+
+  delete: (domainKey: string) =>
+    api.delete(`/domains/${domainKey}`),
+
+  activate: (domainKey: string) =>
+    api.post(`/domains/${domainKey}/activate`),
+
+  getActive: () =>
+    api.get('/domains/active'),
+
+  getEntityTypes: (domainKey: string) =>
+    api.get(`/domains/${domainKey}/entity-types`),
+
+  getRelationTypes: (domainKey: string) =>
+    api.get(`/domains/${domainKey}/relation-types`),
+
+  getInheritanceChain: (domainKey: string) =>
+    api.get(`/domains/${domainKey}/inheritance-chain`),
+}

@@ -77,30 +77,34 @@ class GraphExtractor:
     async def extract_from_chunks(
         self,
         chunks: list[ChunkNode],
+        domain_context: dict | None = None,  # New parameter for domain context
     ) -> list[ExtractionResult]:
         """Process multiple chunks concurrently with rate limiting.
 
         Args:
             chunks: Text chunks to extract entities/relationships from.
+            domain_context: Optional domain context with custom extraction prompt.
 
         Returns:
             List of ExtractionResult, one per chunk (may be empty on failure).
         """
-        tasks = [self._process_chunk_with_semaphore(chunk) for chunk in chunks]
+        tasks = [self._process_chunk_with_semaphore(chunk, domain_context) for chunk in chunks]
         results = await asyncio.gather(*tasks, return_exceptions=False)
         return results
 
     async def _process_chunk_with_semaphore(
         self,
         chunk: ChunkNode,
+        domain_context: dict | None = None,  # New parameter
     ) -> ExtractionResult:
         """Acquire semaphore and process a single chunk."""
         async with self._semaphore:
-            return await self._process_chunk_safe(chunk)
+            return await self._process_chunk_safe(chunk, domain_context)
 
     async def _process_chunk_safe(
         self,
         chunk: ChunkNode,
+        domain_context: dict | None = None,  # New parameter
     ) -> ExtractionResult:
         """Process chunk with retry and graceful degradation.
 
@@ -108,7 +112,7 @@ class GraphExtractor:
         rather than propagating the exception.
         """
         try:
-            return await self._process_chunk_with_retry(chunk)
+            return await self._process_chunk_with_retry(chunk, domain_context)
         except (LLMExtractionError, LLMResponseParsingError) as exc:
             logger.warning(
                 "Extraction failed after retries for chunk %s: %s",
@@ -131,6 +135,7 @@ class GraphExtractor:
     async def _process_chunk_with_retry(
         self,
         chunk: ChunkNode,
+        domain_context: dict | None = None,  # New parameter
     ) -> ExtractionResult:
         """Single chunk extraction with retry logic.
 
@@ -138,19 +143,27 @@ class GraphExtractor:
             LLMExtractionError: If the LLM call itself fails.
             LLMResponseParsingError: If the response cannot be parsed.
         """
-        return await self._extract_single_chunk(chunk)
+        return await self._extract_single_chunk(chunk, domain_context)
 
     async def _extract_single_chunk(
         self,
         chunk: ChunkNode,
+        domain_context: dict | None = None,  # New parameter
     ) -> ExtractionResult:
         """Call LLM and parse the response into domain models."""
+        # Use domain-specific prompt if available
+        prompt_system = ENTITY_EXTRACTION_SYSTEM
+        if domain_context:
+            custom_prompt = domain_context.get("extraction_prompt_template")
+            if custom_prompt:
+                prompt_system = custom_prompt
+
         prompt_user = ENTITY_EXTRACTION_USER.format(chunk_content=chunk.content)
 
         try:
             response = await self._llm.ainvoke(
                 [
-                    {"role": "system", "content": ENTITY_EXTRACTION_SYSTEM},
+                    {"role": "system", "content": prompt_system},
                     {"role": "user", "content": prompt_user},
                 ]
             )

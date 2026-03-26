@@ -10,12 +10,14 @@ import {
   Home,
   Network,
   GitCommitHorizontal,
+  Folder,
 } from 'lucide-react'
 
 const navigation = [
   { name: '首页', href: '/', icon: Home },
   { name: '资产目录', href: '/assets', icon: Database },
   { name: '图谱可视化', href: '/graph', icon: Network },
+  { name: '领域管理', href: '/domains', icon: Folder },
   { name: '本体管理', href: '/ontology', icon: GitBranch },
   { name: '协作审核', href: '/review', icon: Users },
   { name: '探索路径', href: '/explorations', icon: Map },
@@ -42,22 +44,27 @@ export function Sidebar({ className }: SidebarProps) {
             <ul role="list" className="-mx-2 space-y-1">
               {navigation.map((item) => {
                 const isActive = location.pathname === item.href
+                const itemClass = cn(
+                  'group flex gap-x-3 rounded-md p-2 text-sm leading-6 font-semibold',
+                  item.disabled
+                    ? 'text-muted-foreground cursor-not-allowed opacity-50'
+                    : isActive
+                      ? 'bg-primary text-primary-foreground'
+                      : 'text-muted-foreground hover:text-foreground hover:bg-secondary',
+                )
                 return (
                   <li key={item.name}>
-                    <Link
-                      to={item.href}
-                      className={cn(
-                        'group flex gap-x-3 rounded-md p-2 text-sm leading-6 font-semibold',
-                        item.disabled
-                          ? 'text-muted-foreground cursor-not-allowed opacity-50'
-                          : isActive
-                          ? 'bg-primary text-primary-foreground'
-                          : 'text-muted-foreground hover:text-foreground hover:bg-secondary'
-                      )}
-                    >
-                      <item.icon className="h-6 w-6 shrink-0" />
-                      {item.name}
-                    </Link>
+                    {item.disabled ? (
+                      <span className={itemClass} aria-disabled="true">
+                        <item.icon className="h-6 w-6 shrink-0" />
+                        {item.name}
+                      </span>
+                    ) : (
+                      <Link to={item.href} className={itemClass}>
+                        <item.icon className="h-6 w-6 shrink-0" />
+                        {item.name}
+                      </Link>
+                    )}
                   </li>
                 )
               })}
