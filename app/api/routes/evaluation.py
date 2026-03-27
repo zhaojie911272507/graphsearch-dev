@@ -29,6 +29,8 @@ from app.api.schemas.evaluation import (
     PromptTestResponseSchema,
     QueryEvaluationSchema,
 )
+from app.persistence.audit_log import AuditLogger
+from app.domain.audit import AuditAction
 
 logger = logging.getLogger(__name__)
 
@@ -294,6 +296,16 @@ async def create_pipeline_config(
             change_summary=config.change_summary,
         )
 
+        # Log audit event
+        audit_logger = AuditLogger(store, store._settings)
+        await audit_logger.log_event(
+            action=AuditAction.PIPELINE_CONFIG_CREATED,
+            user_id="current_user",
+            resource_type="pipeline",
+            resource_id=config.version,
+            changes=config.model_dump(),
+        )
+
         return PipelineConfigSchema(
             version=created["version"],
             retrieval=created.get("retrieval", {}),
@@ -330,6 +342,16 @@ async def activate_pipeline_config(
             )
 
         await store.activate_pipeline_config(version)
+
+        # Log audit event
+        audit_logger = AuditLogger(store, store._settings)
+        await audit_logger.log_event(
+            action=AuditAction.PIPELINE_CONFIG_ACTIVATED,
+            user_id="current_user",
+            resource_type="pipeline",
+            resource_id=version,
+            changes={"activated": True},
+        )
 
         return {
             "success": True,
@@ -402,6 +424,16 @@ async def create_prompt_template(
             variables=template.variables,
             version=template.version,
             created_by="current_user",
+        )
+
+        # Log audit event
+        audit_logger = AuditLogger(store, store._settings)
+        await audit_logger.log_event(
+            action=AuditAction.PROMPT_TEMPLATE_CREATED,
+            user_id="current_user",
+            resource_type="prompt",
+            resource_id=template.name,
+            changes=template.model_dump(),
         )
 
         return PromptTemplateSchema(

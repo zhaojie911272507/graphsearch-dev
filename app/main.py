@@ -15,7 +15,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 
 from app.api.routes import ingest, query
-from app.api.routes import metadata, ontology, intelligence, evaluation, domains
+from app.api.routes import metadata, ontology, intelligence, evaluation, domains, audit, documents, simulation
+from app.api.routes import simulation_exec, simulation_report, simulation_dialogue
 from app.visualization.routes import router as viz_router
 from app.config import Settings, get_settings
 from app.domain.schemas import HealthResponse
@@ -79,6 +80,21 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     try:
         await graph_store.__aenter__()
         await graph_store.ensure_indexes(dimension=settings.embedding.dimension)
+        # Initialize built-in ontology types
+        await graph_store.ensure_builtin_ontology_types()
+        await log.ainfo("Built-in ontology types initialized")
+        if settings.app.domain_auto_bootstrap:
+            try:
+                await graph_store.ensure_default_active_domain(
+                    default_domain_key=settings.app.default_domain_key,
+                    default_name=settings.app.default_domain_name,
+                )
+                await log.ainfo("Active domain ensured (bootstrap)")
+            except Exception as boot_exc:
+                await log.awarning(
+                    "Domain auto-bootstrap failed — GET /domains/active may return 404 until a domain exists",
+                    error=str(boot_exc),
+                )
         await log.ainfo("Neo4j connected and indexes ensured")
     except Exception as exc:
         await log.awarning("Neo4j not available — persistence will fail", error=str(exc))
@@ -142,6 +158,12 @@ def create_app() -> FastAPI:
     app.include_router(intelligence.router, prefix="/api/v1")
     app.include_router(evaluation.router, prefix="/api/v1")
     app.include_router(domains.router, prefix="/api/v1")
+    app.include_router(audit.router, prefix="/api/v1")
+    app.include_router(documents.router, prefix="/api/v1")
+    app.include_router(simulation.router, prefix="/api/v1")
+    app.include_router(simulation_exec.router, prefix="/api/v1")
+    app.include_router(simulation_report.router, prefix="/api/v1")
+    app.include_router(simulation_dialogue.router, prefix="/api/v1")
     app.include_router(viz_router)
 
     # Health endpoint

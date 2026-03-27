@@ -242,7 +242,7 @@ function CreateDomainForm({ onSubmit }: { onSubmit: (data: any) => void }) {
 
           <div className="flex justify-end gap-2">
             <Button type="button" variant="outline" onClick={() => {
-              document.querySelector('#domain-manager button')?.click()
+              (document.querySelector('#domain-manager button') as HTMLElement)?.click()
             }}>
               取消
             </Button>

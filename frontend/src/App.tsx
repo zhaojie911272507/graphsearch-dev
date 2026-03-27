@@ -1,4 +1,4 @@
-import { Routes, Route, useLocation } from 'react-router-dom'
+import { Routes, Route } from 'react-router-dom'
 import { Layout } from './components/layout/Layout'
 import { AssetCatalog } from './pages/AssetCatalog'
 import { NodeDetail } from './pages/NodeDetail'
@@ -7,21 +7,26 @@ import { ReviewQueue } from './pages/ReviewQueue'
 import { Explorations } from './pages/Explorations'
 import { EvaluationDashboard } from './pages/EvaluationDashboard'
 import { GraphViz } from './pages/GraphViz'
-import { LineageTracking } from './pages/LineageTracking'
+import LineageTracking from './pages/LineageTracking'
 import { SettingsPage } from './pages/SettingsPage'
 import { LineageIndex } from './pages/LineageIndex'
 import { NotFoundPage } from './pages/NotFoundPage'
 import { DomainManager } from './pages/DomainManager'
+import { DocumentManager } from './pages/DocumentManager'
+import { DocumentDetail } from './pages/DocumentDetail'
+import { SimulationExecution } from './pages/SimulationExecution'
+import { SimulationReports } from './pages/SimulationReports'
+import { SimulationDialogue } from './pages/SimulationDialogue'
 
 function App() {
-  const location = useLocation()
-  console.log('App rendering, current path:', location.pathname)
   return (
     <Routes>
       <Route path="/" element={<Layout />}>
         <Route index element={<AssetCatalog />} />
         <Route path="assets" element={<AssetCatalog />} />
         <Route path="assets/:nodeId" element={<NodeDetail />} />
+        <Route path="documents" element={<DocumentManager />} />
+        <Route path="documents/:documentId" element={<DocumentDetail />} />
         <Route path="lineage" element={<LineageIndex />} />
         <Route path="lineage/:nodeId" element={<LineageTracking />} />
         <Route path="ontology" element={<OntologyManager />} />
@@ -30,6 +35,9 @@ function App() {
         <Route path="explorations" element={<Explorations />} />
         <Route path="evaluation" element={<EvaluationDashboard />} />
         <Route path="graph" element={<GraphViz />} />
+        <Route path="simulation" element={<SimulationExecution />} />
+        <Route path="simulation/reports" element={<SimulationReports />} />
+        <Route path="simulation/dialogue" element={<SimulationDialogue />} />
         <Route path="settings" element={<SettingsPage />} />
         <Route path="*" element={<NotFoundPage />} />
       </Route>

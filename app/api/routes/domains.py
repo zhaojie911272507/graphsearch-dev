@@ -14,6 +14,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query, status
 
 from app.api.dependencies import GraphStoreDep
+from app.config import get_settings
 from app.api.schemas.domains import (
     DomainActivateResponse,
     DomainCreateSchema,
@@ -117,6 +118,43 @@ async def create_domain(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to create domain: {exc}",
+        ) from exc
+
+
+@router.get(
+    "/active",
+    response_model=DomainSchema,
+    summary="Get active domain",
+)
+async def get_active_domain(store: GraphStoreDep) -> DomainSchema:
+    """Get the currently active domain.
+
+    Registered before ``/{domain_key}`` so ``active`` is not captured as a domain key.
+    When ``domain_auto_bootstrap`` is enabled (default), creates or activates a default
+    domain so this endpoint does not return 404 on an empty graph.
+    """
+    try:
+        settings = get_settings()
+        if settings.app.domain_auto_bootstrap:
+            domain = await store.ensure_default_active_domain(
+                default_domain_key=settings.app.default_domain_key,
+                default_name=settings.app.default_domain_name,
+            )
+        else:
+            domain = await store.get_active_domain()
+        if not domain:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No active domain found",
+            )
+        return _domain_to_schema(domain)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Failed to get active domain: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get active domain: {exc}",
         ) from exc
 
 
@@ -256,31 +294,6 @@ async def activate_domain(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to activate domain: {exc}",
-        ) from exc
-
-
-@router.get(
-    "/active",
-    response_model=DomainSchema,
-    summary="Get active domain",
-)
-async def get_active_domain(store: GraphStoreDep) -> DomainSchema:
-    """Get the currently active domain."""
-    try:
-        domain = await store.get_active_domain()
-        if not domain:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="No active domain found",
-            )
-        return _domain_to_schema(domain)
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.exception("Failed to get active domain: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get active domain: {exc}",
         ) from exc
 
 

@@ -99,3 +99,12 @@ class DocumentAlreadyExistsError(IngestionError):
 
 class InvalidDocumentError(IngestionError):
     """Raised when the submitted document is malformed or empty."""
+
+
+# ──────────────────────────────────────────
+# Timeout
+# ──────────────────────────────────────────
+
+
+class TimeoutError(GraphRAGError):
+    """Raised when an operation exceeds its configured timeout."""

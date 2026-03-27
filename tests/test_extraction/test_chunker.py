@@ -1,4 +1,7 @@
-"""Tests for the TextChunker utility."""
+"""Tests for the TextChunker utility.
+
+Tests for semantic-aware chunking logic inspired by MiroFish.
+"""
 
 from uuid import uuid4
 
@@ -41,10 +44,11 @@ class TestTextChunker:
 
     def test_long_text_multiple_chunks(self, chunker: TextChunker) -> None:
         doc_id = uuid4()
-        # 300 chars → should produce multiple chunks with size=100, overlap=20
-        text = "A" * 300
+        # Text with paragraph breaks → should split by semantic boundaries
+        text = "First paragraph. " * 20 + "\n\n" + "Second paragraph. " * 20
         chunks = chunker.chunk_text(text, doc_id)
-        assert len(chunks) >= 3
+        # Should produce multiple chunks based on semantic structure
+        assert len(chunks) >= 2
         # Verify ordering
         for i, chunk in enumerate(chunks):
             assert chunk.chunk_index == i
@@ -53,20 +57,92 @@ class TestTextChunker:
         settings = ExtractionSettings(
             max_concurrency=5,
             max_retries=2,
-            chunk_size=50,
-            chunk_overlap=10,
+            chunk_size=100,  # Minimum allowed is 64
+            chunk_overlap=20,
         )
         chunker = TextChunker(settings)
         doc_id = uuid4()
-        text = "0123456789" * 10  # 100 chars
+        # Text with natural paragraph breaks
+        text = "First part with sentences. " * 10 + "\n\n" + "Second part with more sentences. " * 10
 
         chunks = chunker.chunk_text(text, doc_id)
-        # With size=50, overlap=10, step=40 → expect 3 chunks for 100 chars
         assert len(chunks) >= 2
+
+        # Verify overlap metadata is populated for chunks after the first
+        chunks_with_overlap = [c for c in chunks if c.previous_chunk_overlap]
+        assert len(chunks_with_overlap) >= 1
+
+        # Verify that chunks have semantic boundaries marked
+        for chunk in chunks:
+            assert chunk.semantic_boundary_start is True
+            assert chunk.semantic_boundary_end is True
 
     def test_chunk_index_sequential(self, chunker: TextChunker) -> None:
         doc_id = uuid4()
-        text = "x" * 500
+        text = "Sentence one. " * 50 + "\n\n" + "Sentence two. " * 50
         chunks = chunker.chunk_text(text, doc_id)
         indices = [c.chunk_index for c in chunks]
         assert indices == list(range(len(chunks)))
+
+    def test_semantic_metadata(self, chunker: TextChunker) -> None:
+        """Test that chunks include semantic metadata."""
+        doc_id = uuid4()
+        text = """# Introduction
+
+This is the introduction section with some content.
+
+## Details
+
+Here are the details with more information.
+
+- List item 1
+- List item 2
+"""
+        chunks = chunker.chunk_text(text, doc_id)
+
+        assert len(chunks) >= 1
+
+        # Verify metadata fields are populated
+        for chunk in chunks:
+            assert hasattr(chunk, 'section_title')
+            assert hasattr(chunk, 'paragraph_type')
+            assert hasattr(chunk, 'word_count')
+            assert hasattr(chunk, 'sentence_count')
+            assert chunk.semantic_boundary_start is True
+            assert chunk.semantic_boundary_end is True
+
+    def test_section_header_detection(self, chunker: TextChunker) -> None:
+        """Test that section headers are detected and preserved."""
+        doc_id = uuid4()
+        text = """# Main Title
+
+Content under main title.
+
+## Sub Section
+
+Content under subsection.
+"""
+        chunks = chunker.chunk_text(text, doc_id)
+
+        # Should have section titles populated
+        section_titles = [c.section_title for c in chunks]
+        assert any('Main Title' in t or 'Sub Section' in t for t in section_titles)
+
+    def test_paragraph_type_detection(self, chunker: TextChunker) -> None:
+        """Test different paragraph types are detected."""
+        doc_id = uuid4()
+
+        # Test code block
+        code_text = "```python\ncode here\n```"
+        chunks = chunker.chunk_text(code_text, doc_id)
+        assert any(c.paragraph_type == 'code' for c in chunks)
+
+        # Test list
+        list_text = "- Item 1\n- Item 2"
+        chunks = chunker.chunk_text(list_text, doc_id)
+        assert any(c.paragraph_type == 'list' for c in chunks)
+
+        # Test header
+        header_text = "# Header Title"
+        chunks = chunker.chunk_text(header_text, doc_id)
+        assert any(c.paragraph_type == 'header' for c in chunks)

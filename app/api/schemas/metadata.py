@@ -124,3 +124,29 @@ class VoteCreateSchema(BaseModel):
 
     vote_type: str
     comment: str = ""
+
+
+class GraphVizNodeItemSchema(BaseModel):
+    """Node payload for SPA graph visualization (D3.js force-directed graph)."""
+
+    id: str
+    type: str = Field(..., description="Node type: Document, Chunk, Entity, Concept")
+    label: str = Field(..., description="Short label for display on the node")
+    name: str = Field(..., description="Display title (full name)")
+    quality_score: float | None = None
+
+
+class GraphVizEdgeItemSchema(BaseModel):
+    """Edge payload for SPA graph visualization."""
+
+    source: str
+    target: str
+    label: str = Field(..., description="Relationship type")
+    weight: float = 1.0
+
+
+class GraphVizDataSchema(BaseModel):
+    """Subgraph for /metadata/graph-viz."""
+
+    nodes: list[GraphVizNodeItemSchema] = Field(default_factory=list)
+    edges: list[GraphVizEdgeItemSchema] = Field(default_factory=list)
