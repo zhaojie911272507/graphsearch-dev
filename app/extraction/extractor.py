@@ -2,11 +2,15 @@
 
 Processes text chunks concurrently with semaphore-based rate limiting
 and implements retry-with-graceful-degradation for LLM failures.
+
+Supports cross-document entity deduplication by name + entity_type.
 """
 
 import asyncio
+import hashlib
 import json
 import logging
+import uuid
 from uuid import UUID
 
 from langchain_openai import ChatOpenAI
@@ -218,22 +222,42 @@ class GraphExtractor:
             except ValueError:
                 entity_type = EntityType.OTHER
 
+            entity_name = raw_entity.get("name", "Unknown")
+            description = raw_entity.get("description", "")
+
+            # Generate deterministic UUID based on name + entity_type for deduplication
+            # This ensures the same entity name across documents gets the same UUID
+            dedup_key = f"{entity_name}|{entity_type.value}"
+            entity_id = UUID(hex=hashlib.md5(dedup_key.encode()).hexdigest())
+
             entity = EntityNode(
-                name=raw_entity.get("name", "Unknown"),
+                id=entity_id,
+                name=entity_name,
                 entity_type=entity_type,
-                description=raw_entity.get("description", ""),
+                description=description,
+                reference_count=1,
+                source_document_ids=[],  # Will be populated by caller
             )
             entities.append(entity)
-            name_to_id[entity.name] = entity.id
+            name_to_id[entity_name] = entity_id
 
         # Parse concepts
         for raw_concept in data.get("concepts", []):
+            concept_name = raw_concept.get("name", "Unknown")
+            definition = raw_concept.get("definition", "")
+
+            # Generate deterministic UUID based on name for deduplication
+            concept_id = UUID(hex=hashlib.md5(concept_name.encode()).hexdigest())
+
             concept = ConceptNode(
-                name=raw_concept.get("name", "Unknown"),
-                definition=raw_concept.get("definition", ""),
+                id=concept_id,
+                name=concept_name,
+                definition=definition,
+                reference_count=1,
+                source_document_ids=[],  # Will be populated by caller
             )
             concepts.append(concept)
-            name_to_id[concept.name] = concept.id
+            name_to_id[concept_name] = concept_id
 
         # Parse relationships (only if both endpoints exist)
         relationships: list[GraphRelationship] = []

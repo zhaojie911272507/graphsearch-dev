@@ -20,6 +20,9 @@ from app.api.schemas.metadata import (
     AnnotationUpdateSchema,
     AssetListItemSchema,
     AssetListResponseSchema,
+    GraphVizDataSchema,
+    GraphVizEdgeItemSchema,
+    GraphVizNodeItemSchema,
     LineageResponseSchema,
     NodeDetailSchema,
     TagSchema,
@@ -149,6 +152,47 @@ async def list_assets(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to list assets: {exc}",
+        ) from exc
+
+
+@router.get(
+    "/graph-viz",
+    response_model=GraphVizDataSchema,
+    summary="Graph subgraph for visualization",
+    description="Returns nodes and edges for the React graph view; must be registered before /{node_id}.",
+)
+async def get_graph_viz(
+    store: GraphStoreDep,
+    limit: int = Query(default=100, ge=1, le=2000, description="Max relationships to sample"),
+) -> GraphVizDataSchema:
+    """Fetch a subgraph for the platform graph visualization page."""
+    try:
+        nodes_raw, edges_raw = await store.get_graph_for_visualization(limit=limit)
+        nodes = [
+            GraphVizNodeItemSchema(
+                id=str(n["id"]),
+                type=str(n.get("type", "Unknown")),
+                label=str(n.get("label", n.get("name", n["id"])[:30])),
+                name=str(n.get("name", n.get("title", n["id"]))),
+                quality_score=n.get("quality_score"),
+            )
+            for n in nodes_raw
+        ]
+        edges = [
+            GraphVizEdgeItemSchema(
+                source=str(e["source"]),
+                target=str(e["target"]),
+                label=str(e.get("label", e.get("relation_type", ""))),
+                weight=float(e.get("weight", 1.0) or 1.0),
+            )
+            for e in edges_raw
+        ]
+        return GraphVizDataSchema(nodes=nodes, edges=edges)
+    except Exception as exc:
+        logger.exception("Failed to load graph-viz: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to load graph visualization data: {exc}",
         ) from exc
 
 

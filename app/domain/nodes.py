@@ -63,6 +63,12 @@ class DocumentNode(BaseNode):
         default="",
         description="SHA-256 hash of raw content for deduplication",
     )
+    # File upload metadata
+    filename: str = Field(default="", description="Original uploaded filename")
+    file_size: int = Field(default=0, description="File size in bytes")
+    file_type: str = Field(default="", description="MIME type (pdf, docx, txt)")
+    upload_status: str = Field(default="pending", description="pending/processing/complete/failed")
+    parse_error: str | None = Field(default=None, description="Error message if parsing failed")
 
     def neo4j_properties(self) -> dict[str, object]:
         props = super().neo4j_properties()
@@ -71,6 +77,11 @@ class DocumentNode(BaseNode):
                 "title": self.title,
                 "source_url": self.source_url,
                 "content_hash": self.content_hash,
+                "filename": self.filename,
+                "file_size": self.file_size,
+                "file_type": self.file_type,
+                "upload_status": self.upload_status,
+                "parse_error": self.parse_error,
             }
         )
         return props
@@ -81,6 +92,14 @@ class ChunkNode(BaseNode):
 
     The embedding field stores the dense vector produced by the
     local M3E-Large model (dimension=1024).
+
+    Enhanced with MiroFish-style semantic chunking metadata:
+    - section_title: Optional section/heading this chunk belongs to
+    - paragraph_type: Type of content (paragraph, list, code, table, etc.)
+    - word_count: Number of words in the chunk
+    - sentence_count: Number of sentences in the chunk
+    - semantic_boundary_start: Whether this chunk starts at a semantic boundary
+    - semantic_boundary_end: Whether this chunk ends at a semantic boundary
     """
 
     node_type: NodeType = Field(default=NodeType.CHUNK, frozen=True)
@@ -91,6 +110,14 @@ class ChunkNode(BaseNode):
         default=(),
         description="Dense vector from embedding model",
     )
+    # MiroFish-style semantic metadata
+    section_title: str = Field(default="", description="Section or heading this chunk belongs to")
+    paragraph_type: str = Field(default="paragraph", description="Type: paragraph/list/code/table/header")
+    word_count: int = Field(default=0, description="Number of words in chunk")
+    sentence_count: int = Field(default=0, description="Number of sentences in chunk")
+    semantic_boundary_start: bool = Field(default=True, description="Whether chunk starts at semantic boundary")
+    semantic_boundary_end: bool = Field(default=True, description="Whether chunk ends at semantic boundary")
+    previous_chunk_overlap: str = Field(default="", description="Text overlap from previous chunk")
 
     @field_validator("embedding")
     @classmethod
@@ -113,18 +140,31 @@ class ChunkNode(BaseNode):
                 "chunk_index": self.chunk_index,
                 "document_id": str(self.document_id),
                 "embedding": list(self.embedding) if self.embedding else [],
+                "section_title": self.section_title,
+                "paragraph_type": self.paragraph_type,
+                "word_count": self.word_count,
+                "sentence_count": self.sentence_count,
+                "semantic_boundary_start": self.semantic_boundary_start,
+                "semantic_boundary_end": self.semantic_boundary_end,
+                "previous_chunk_overlap": self.previous_chunk_overlap,
             }
         )
         return props
 
 
 class EntityNode(BaseNode):
-    """Represents a named entity extracted from text."""
+    """Represents a named entity extracted from text.
+
+    When entity_deduplication is enabled, entities are merged by name + entity_type
+    across documents, and reference_count tracks how many documents reference this entity.
+    """
 
     node_type: NodeType = Field(default=NodeType.ENTITY, frozen=True)
     name: str = Field(..., min_length=1, max_length=300)
     entity_type: EntityType = Field(...)
     description: str = Field(default="")
+    reference_count: int = Field(default=1, description="Number of documents referencing this entity")
+    source_document_ids: list[str] = Field(default_factory=list, description="List of document IDs referencing this entity")
 
     def neo4j_properties(self) -> dict[str, object]:
         props = super().neo4j_properties()
@@ -133,17 +173,25 @@ class EntityNode(BaseNode):
                 "name": self.name,
                 "entity_type": self.entity_type.value,
                 "description": self.description,
+                "reference_count": self.reference_count,
+                "source_document_ids": self.source_document_ids,
             }
         )
         return props
 
 
 class ConceptNode(BaseNode):
-    """Represents an abstract concept or topic."""
+    """Represents an abstract concept or topic.
+
+    When concept_deduplication is enabled, concepts are merged by name
+    across documents, and reference_count tracks how many documents reference this concept.
+    """
 
     node_type: NodeType = Field(default=NodeType.CONCEPT, frozen=True)
     name: str = Field(..., min_length=1, max_length=300)
     definition: str = Field(default="")
+    reference_count: int = Field(default=1, description="Number of documents referencing this concept")
+    source_document_ids: list[str] = Field(default_factory=list, description="List of document IDs referencing this concept")
 
     def neo4j_properties(self) -> dict[str, object]:
         props = super().neo4j_properties()
@@ -151,6 +199,8 @@ class ConceptNode(BaseNode):
             {
                 "name": self.name,
                 "definition": self.definition,
+                "reference_count": self.reference_count,
+                "source_document_ids": self.source_document_ids,
             }
         )
         return props

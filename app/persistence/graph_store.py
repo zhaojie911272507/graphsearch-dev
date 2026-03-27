@@ -13,9 +13,10 @@ from neo4j import AsyncDriver, AsyncGraphDatabase, AsyncManagedTransaction
 
 from app.config import Neo4jSettings
 from app.domain.enums import NodeType, RelationType
-from app.domain.nodes import GraphNode
+from app.domain.nodes import GraphNode, EntityNode, ConceptNode
 from app.domain.relationships import GraphRelationship
 from app.exceptions import Neo4jConnectionError, Neo4jQueryError, Neo4jTransactionError
+from app.utils.retry import with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -41,10 +42,30 @@ MERGE (n:Entity {id: row.id})
 SET n += row
 """
 
+# Entity deduplication by name + entity_type (for cross-document sharing)
+_MERGE_ENTITY_BY_NAME = """
+UNWIND $batch AS row
+MERGE (n:Entity {name: row.name, entity_type: row.entity_type})
+SET n.description = COALESCE(n.description, row.description, ''),
+    n.updated_at = row.updated_at,
+    n.reference_count = COALESCE(n.reference_count, 0) + COALESCE(row.reference_count, 1)
+RETURN n
+"""
+
 _MERGE_CONCEPT = """
 UNWIND $batch AS row
 MERGE (n:Concept {id: row.id})
 SET n += row
+"""
+
+# Concept deduplication by name (for cross-document sharing)
+_MERGE_CONCEPT_BY_NAME = """
+UNWIND $batch AS row
+MERGE (n:Concept {name: row.name})
+SET n.definition = COALESCE(n.definition, row.definition, ''),
+    n.updated_at = row.updated_at,
+    n.reference_count = COALESCE(n.reference_count, 0) + COALESCE(row.reference_count, 1)
+RETURN n
 """
 
 _MERGE_RELATIONSHIP = """
@@ -132,10 +153,11 @@ RETURN DISTINCT neighbor, rels
 """
 
 # Visualization: subgraph for frontend (edges imply nodes)
+# Match any labeled nodes and their relationships
 _GRAPH_FOR_VIZ = """
 MATCH (n)-[r]->(m)
-WHERE (n:Document OR n:Chunk OR n:Entity OR n:Concept)
-  AND (m:Document OR m:Chunk OR m:Entity OR m:Concept)
+WHERE n:Document OR n:Chunk OR n:Entity OR n:Concept OR n:Agent OR n:Memory OR n:Interaction OR n:SimulationSession OR n:World OR n:Seed OR labels(n)[0] IS NOT NULL
+  AND (m:Document OR m:Chunk OR m:Entity OR m:Concept OR m:Agent OR m:Memory OR m:Interaction OR m:SimulationSession OR m:World OR m:Seed OR labels(m)[0] IS NOT NULL)
 WITH n, r, m
 LIMIT $limit
 RETURN n, type(r) AS rel_type, r.weight AS weight, m
@@ -339,6 +361,7 @@ class GraphStore:
     # Schema & Index Management
     # ──────────────────────────────────────────
 
+    @with_retry(max_attempts=3, timeout=30.0)
     async def ensure_indexes(self, dimension: int = 1024) -> None:
         """Create vector index and uniqueness constraints if they don't exist.
 
@@ -401,6 +424,7 @@ class GraphStore:
                     f"Failed to create additional indexes: {exc}",
                 ) from exc
 
+    @with_retry(max_attempts=3, timeout=30.0)
     async def get_index_stats(self) -> list[dict[str, object]]:
         """Get statistics about all indexes in the database.
 
@@ -435,6 +459,7 @@ class GraphStore:
     # Batch Node Operations
     # ──────────────────────────────────────────
 
+    @with_retry(max_attempts=3, timeout=30.0)
     async def upsert_nodes(self, nodes: list[GraphNode]) -> int:
         """Batch upsert nodes using MERGE (idempotent).
 
@@ -479,10 +504,102 @@ class GraphStore:
 
         return total
 
-    # ──────────────────────────────────────────
-    # Batch Relationship Operations
+    async def upsert_entities_with_dedup(
+        self,
+        entities: list[EntityNode],
+        document_id: str,
+    ) -> int:
+        """Upsert entities with deduplication by name + entity_type.
+
+        Uses MERGE on (name, entity_type) to share entities across documents.
+        Updates reference_count and source_document_ids for tracking.
+
+        Args:
+            entities: List of EntityNode instances to persist.
+            document_id: The document ID that references these entities.
+
+        Returns:
+            Number of entities processed.
+        """
+        if not entities:
+            return 0
+
+        async with self.driver.session(database=self._settings.database) as session:
+            query = """
+            UNWIND $batch AS row
+            MERGE (e:Entity {name: row.name, entity_type: row.entity_type})
+            SET e.description = COALESCE(e.description, row.description, ''),
+                e.updated_at = row.updated_at
+            WITH e, row
+            // Add source document if not already present
+            SET e.source_document_ids = COALESCE(e.source_document_ids, []) +
+                CASE WHEN $doc_id IN e.source_document_ids THEN [] ELSE [$doc_id] END
+            // Update reference count
+            SET e.reference_count = size(COALESCE(e.source_document_ids, [])) +
+                CASE WHEN $doc_id IN COALESCE(e.source_document_ids, []) THEN 0 ELSE 1 END
+            RETURN e
+            """
+
+            try:
+                batch = [e.neo4j_properties() for e in entities]
+                result = await session.run(query, batch=batch, doc_id=document_id)
+                await result.consume()
+                return len(batch)
+            except Exception as exc:
+                raise Neo4jTransactionError(
+                    f"Failed to upsert entities with dedup: {exc}",
+                    details={"entity_count": len(entities)},
+                ) from exc
+
+    async def upsert_concepts_with_dedup(
+        self,
+        concepts: list[ConceptNode],
+        document_id: str,
+    ) -> int:
+        """Upsert concepts with deduplication by name.
+
+        Uses MERGE on (name) to share concepts across documents.
+        Updates reference_count and source_document_ids for tracking.
+
+        Args:
+            concepts: List of ConceptNode instances to persist.
+            document_id: The document ID that references these concepts.
+
+        Returns:
+            Number of concepts processed.
+        """
+        if not concepts:
+            return 0
+
+        async with self.driver.session(database=self._settings.database) as session:
+            query = """
+            UNWIND $batch AS row
+            MERGE (c:Concept {name: row.name})
+            SET c.definition = COALESCE(c.definition, row.definition, ''),
+                c.updated_at = row.updated_at
+            WITH c, row
+            // Add source document if not already present
+            SET c.source_document_ids = COALESCE(c.source_document_ids, []) +
+                CASE WHEN $doc_id IN c.source_document_ids THEN [] ELSE [$doc_id] END
+            // Update reference count
+            SET c.reference_count = size(COALESCE(c.source_document_ids, [])) +
+                CASE WHEN $doc_id IN COALESCE(c.source_document_ids, []) THEN 0 ELSE 1 END
+            RETURN c
+            """
+
+            try:
+                batch = [c.neo4j_properties() for c in concepts]
+                result = await session.run(query, batch=batch, doc_id=document_id)
+                await result.consume()
+                return len(batch)
+            except Exception as exc:
+                raise Neo4jTransactionError(
+                    f"Failed to upsert concepts with dedup: {exc}",
+                    details={"concept_count": len(concepts)},
+                ) from exc
     # ──────────────────────────────────────────
 
+    @with_retry(max_attempts=3, timeout=30.0)
     async def upsert_relationships(self, relationships: list[GraphRelationship]) -> int:
         """Batch upsert relationships using typed MERGE queries.
 
@@ -530,6 +647,7 @@ class GraphStore:
     # Vector Search
     # ──────────────────────────────────────────
 
+    @with_retry(max_attempts=3, timeout=30.0)
     async def vector_search(
         self,
         query_vector: list[float],
@@ -563,6 +681,7 @@ class GraphStore:
     # Graph Traversal
     # ──────────────────────────────────────────
 
+    @with_retry(max_attempts=3, timeout=30.0)
     async def traverse_from_chunks(
         self,
         chunk_ids: list[str],
@@ -629,28 +748,39 @@ class GraphStore:
                     """Convert Neo4j Node to visualization node dict."""
                     nid = str(node.get("id", "")) if hasattr(node, "get") else ""
                     labels_list = list(node.labels) if hasattr(node, "labels") else ["Unknown"]
-                    label = labels_list[0] if labels_list else "Unknown"
+                    node_type = labels_list[0] if labels_list else "Unknown"
 
-                    title = ""
-                    preview = ""
-                    if label == "Document":
-                        title = str(node.get("title") or nid[:8])
-                    elif label == "Chunk":
+                    name = ""
+                    label = ""
+                    quality_score = None
+
+                    # Try to get a human-readable name from common properties
+                    name = str(node.get("name") or node.get("title") or nid[:8])
+
+                    # Set label based on node type
+                    if node_type == "Document":
+                        label = name[:30] + "..." if len(name) > 30 else name
+                    elif node_type == "Chunk":
+                        chunk_index = node.get('chunk_index')
+                        label = f"Chunk #{chunk_index}" if chunk_index is not None else "Chunk"
                         content = str(node.get("content") or "")
-                        preview = (content[:200] + "…") if len(content) > 200 else content
-                        title = f"Chunk #{node.get('chunk_index', '?')}"
-                    elif label == "Entity":
-                        title = str(node.get("name") or nid[:8])
-                        preview = str(node.get("description") or "")
-                    elif label == "Concept":
-                        title = str(node.get("name") or nid[:8])
-                        preview = str(node.get("definition") or "")
+                        if not name or name == nid[:8]:
+                            name = (content[:200] + "…") if len(content) > 200 else content
+                    elif node_type == "Entity":
+                        label = name[:30] + "..." if len(name) > 30 else name
+                        quality_score = node.get("quality_score")
+                    elif node_type == "Concept":
+                        label = name[:30] + "..." if len(name) > 30 else name
+                    else:
+                        # Unknown or custom node type - use the label as type and name
+                        label = name[:30] + "..." if len(name) > 30 else name
 
                     return {
                         "id": nid,
-                        "label": label,
-                        "title": title or nid[:8],
-                        "content_preview": (preview[:200] + "…") if len(preview) > 200 else preview,
+                        "type": node_type,
+                        "label": label or nid[:8],
+                        "name": name or nid[:8],
+                        "quality_score": quality_score,
                     }
 
                 async for record in result:
@@ -668,7 +798,7 @@ class GraphStore:
                     edges.append({
                         "source": sid,
                         "target": tid,
-                        "relation_type": rel_type,
+                        "label": rel_type,
                         "weight": float(weight),
                     })
 
@@ -810,6 +940,7 @@ class GraphStore:
             except Exception as exc:
                 raise Neo4jQueryError(f"Failed to count assets: {exc}") from exc
 
+    @with_retry(max_attempts=3, timeout=30.0)
     async def get_node_by_id(self, node_id: str) -> dict[str, object] | None:
         """Get complete node data by ID."""
         async with self.driver.session(database=self._settings.database) as session:
@@ -855,6 +986,7 @@ class GraphStore:
             except Exception as exc:
                 raise Neo4jQueryError(f"Failed to get relations: {exc}") from exc
 
+    @with_retry(max_attempts=3, timeout=30.0)
     async def get_node_lineage(
         self,
         node_id: str,
@@ -870,7 +1002,6 @@ class GraphStore:
             if direction in ("upstream", "both"):
                 query_up = """
                 MATCH path = (start {id: $node_id})<-[*1..$depth]-(source)
-                WHERE source:Document OR source:Chunk
                 WITH path, [node IN nodes(path) | {
                     id: node.id,
                     node_type: labels(node)[0],
@@ -906,6 +1037,7 @@ class GraphStore:
                 "downstream_count": downstream_count,
             }
 
+    @with_retry(max_attempts=3, timeout=30.0)
     async def get_node_annotations(
         self,
         node_id: str,
@@ -950,6 +1082,7 @@ class GraphStore:
             except Exception as exc:
                 raise Neo4jQueryError(f"Failed to get annotations: {exc}") from exc
 
+    @with_retry(max_attempts=3, timeout=30.0)
     async def create_annotation(
         self,
         node_id: str,
@@ -994,6 +1127,7 @@ class GraphStore:
             except Exception as exc:
                 raise Neo4jQueryError(f"Failed to create annotation: {exc}") from exc
 
+    @with_retry(max_attempts=3, timeout=30.0)
     async def update_annotation(
         self,
         annotation_id: str,
@@ -1093,17 +1227,151 @@ class GraphStore:
     # Ontology Management
     # ──────────────────────────────────────────
 
+    async def ensure_builtin_ontology_types(self) -> None:
+        """Initialize built-in ontology types if not exists."""
+        async with self.driver.session(database=self._settings.database) as session:
+            # Check if built-in types already exist
+            result = await session.run("""
+                MATCH (t:OntologyEntityType {is_builtin: true})
+                RETURN count(t) as count
+                """)
+            record = await result.single()
+            if record and record["count"] > 0:
+                return  # Already initialized
+
+            # Built-in entity types
+            builtin_entity_types = [
+                {
+                    "name": "Document",
+                    "description": "文档节点，代表原始文档或文件",
+                    "color": "#3b82f6",
+                    "icon": "file-text",
+                    "extraction_prompt_template": "",
+                },
+                {
+                    "name": "Chunk",
+                    "description": "文本块节点，代表文档的分块内容",
+                    "color": "#6b7280",
+                    "icon": "align-left",
+                    "extraction_prompt_template": "",
+                },
+                {
+                    "name": "Entity",
+                    "description": "实体节点，代表从文本中提取的命名实体",
+                    "color": "#10b981",
+                    "icon": "circle",
+                    "extraction_prompt_template": "提取文本中的命名实体，如人名、地名、组织机构名等",
+                },
+                {
+                    "name": "Concept",
+                    "description": "概念节点，代表抽象概念或术语",
+                    "color": "#8b5cf6",
+                    "icon": "lightbulb",
+                    "extraction_prompt_template": "提取文本中的关键概念、术语或抽象思想",
+                },
+            ]
+
+            # Built-in relation types
+            builtin_relation_types = [
+                {
+                    "name": "HAS_CHUNK",
+                    "description": "文档包含文本块",
+                    "source_types": ["Document"],
+                    "target_types": ["Chunk"],
+                    "directionality": "DIRECTED",
+                },
+                {
+                    "name": "MENTIONS",
+                    "description": "文本块提及实体或概念",
+                    "source_types": ["Chunk"],
+                    "target_types": ["Entity", "Concept"],
+                    "directionality": "DIRECTED",
+                },
+                {
+                    "name": "RELATED_TO",
+                    "description": "实体/概念之间的通用关联",
+                    "source_types": ["Entity", "Concept"],
+                    "target_types": ["Entity", "Concept"],
+                    "directionality": "UNDIRECTED",
+                },
+                {
+                    "name": "PART_OF",
+                    "description": "部分与整体关系",
+                    "source_types": ["Entity", "Concept"],
+                    "target_types": ["Entity", "Concept"],
+                    "directionality": "DIRECTED",
+                },
+            ]
+
+            import uuid
+            from datetime import datetime
+
+            now = datetime.utcnow().isoformat()
+
+            # Create built-in entity types
+            for et in builtin_entity_types:
+                await session.run("""
+                    CREATE (t:OntologyEntityType {
+                        id: $id,
+                        name: $name,
+                        description: $description,
+                        color: $color,
+                        icon: $icon,
+                        extraction_prompt_template: $extraction_prompt_template,
+                        is_builtin: true,
+                        created_at: $now,
+                        updated_at: $now
+                    })
+                    """,
+                    id=str(uuid.uuid4()),
+                    name=et["name"],
+                    description=et["description"],
+                    color=et["color"],
+                    icon=et["icon"],
+                    extraction_prompt_template=et["extraction_prompt_template"],
+                    now=now,
+                )
+
+            # Create built-in relation types
+            for rt in builtin_relation_types:
+                await session.run("""
+                    CREATE (t:OntologyRelationType {
+                        id: $id,
+                        name: $name,
+                        description: $description,
+                        source_types: $source_types,
+                        target_types: $target_types,
+                        directionality: $directionality,
+                        is_builtin: true,
+                        created_at: $now,
+                        updated_at: $now
+                    })
+                    """,
+                    id=str(uuid.uuid4()),
+                    name=rt["name"],
+                    description=rt["description"],
+                    source_types=rt["source_types"],
+                    target_types=rt["target_types"],
+                    directionality=rt["directionality"],
+                    now=now,
+                )
+
     async def get_entity_types(self, include_builtin: bool = True) -> list[dict[str, object]]:
         """Get all entity types."""
         async with self.driver.session(database=self._settings.database) as session:
-            where_clause = "" if include_builtin else "NOT t.is_builtin"
-
-            query = f"""
-            MATCH (t:OntologyEntityType)
-            WHERE {where_clause}
-            RETURN t
-            ORDER BY t.is_builtin ASC, t.name ASC
-            """
+            if include_builtin:
+                query = """
+                MATCH (t:OntologyEntityType)
+                RETURN t
+                ORDER BY t.is_builtin ASC, t.name ASC
+                """
+            else:
+                query = """
+                MATCH (t:OntologyEntityType)
+                WHERE NOT t.is_builtin
+                RETURN t
+                ORDER BY t.is_builtin ASC, t.name ASC
+                """
 
             try:
                 result = await session.run(query)
@@ -1300,6 +1568,43 @@ class GraphStore:
             except Exception as exc:
                 raise Neo4jQueryError(f"Failed to get active domain: {exc}") from exc
 
+    async def ensure_default_active_domain(
+        self,
+        *,
+        default_domain_key: str = "default",
+        default_name: str = "默认领域",
+        default_description: str = "自动创建的默认业务领域，可在领域管理中修改或切换。",
+    ) -> dict[str, object]:
+        """Ensure exactly one active domain: reuse, promote an existing row, or create default.
+
+        Used when the graph has no ``is_active`` domain (empty DB or inconsistent flags).
+        If domains exist but none are active, activates the newest by ``created_at``.
+        """
+        active = await self.get_active_domain()
+        if active:
+            return active
+
+        all_domains = await self.list_domains(include_inactive=True)
+        if all_domains:
+            key = str(all_domains[0]["domain_key"])
+            await self.activate_domain(key)
+            updated = await self.get_domain_by_key(key)
+            return updated if updated else all_domains[0]
+
+        try:
+            return await self.create_domain(
+                domain_key=default_domain_key,
+                name=default_name,
+                description=default_description,
+            )
+        except Neo4jQueryError:
+            existing = await self.get_domain_by_key(default_domain_key)
+            if existing:
+                await self.activate_domain(default_domain_key)
+                refreshed = await self.get_domain_by_key(default_domain_key)
+                return refreshed if refreshed else existing
+            raise
+
     async def get_domain_entity_types(self, domain_key: str) -> list[dict[str, object]]:
         """Get entity types belonging to a domain."""
         async with self.driver.session(database=self._settings.database) as session:
@@ -1456,6 +1761,7 @@ class GraphStore:
             except Exception as exc:
                 raise Neo4jQueryError(f"Failed to count entities: {exc}") from exc
 
+    @with_retry(max_attempts=3, timeout=30.0)
     async def create_entity_type(
         self,
         name: str,
@@ -1503,6 +1809,7 @@ class GraphStore:
             except Exception as exc:
                 raise Neo4jQueryError(f"Failed to create entity type: {exc}") from exc
 
+    @with_retry(max_attempts=3, timeout=30.0)
     async def update_entity_type(
         self,
         name: str,
@@ -1537,6 +1844,7 @@ class GraphStore:
             except Exception as exc:
                 raise Neo4jQueryError(f"Failed to update entity type: {exc}") from exc
 
+    @with_retry(max_attempts=3, timeout=30.0)
     async def delete_entity_type(self, name: str) -> bool:
         """Delete an entity type."""
         async with self.driver.session(database=self._settings.database) as session:
@@ -1552,17 +1860,68 @@ class GraphStore:
             except Exception as exc:
                 raise Neo4jQueryError(f"Failed to delete entity type: {exc}") from exc
 
+    async def get_documents_for_analysis(
+        self,
+        limit: int = 10,
+    ) -> list[dict[str, object]]:
+        """Get documents suitable for AI-powered ontology analysis.
+
+        Returns documents with their content, preferring those with rich text.
+        """
+        async with self.driver.session(database=self._settings.database) as session:
+            query = """
+            MATCH (d:Document)
+            WHERE d.status = 'PROCESSED' OR d.status IS NULL
+            RETURN d.id AS id,
+                   d.title AS title,
+                   d.content AS content,
+                   d.file_name AS file_name,
+                   d.status AS status,
+                   d.created_at AS created_at
+            ORDER BY d.created_at DESC
+            LIMIT $limit
+            """
+            try:
+                result = await session.run(query, limit=limit)
+                documents = []
+                async for record in result:
+                    doc = dict(record)
+                    # Also fetch chunks for richer context
+                    chunks_query = """
+                    MATCH (d:Document {id: $doc_id})-[:HAS_CHUNK]->(c:Chunk)
+                    RETURN c.content AS content, c.chunk_index AS index
+                    ORDER BY c.chunk_index ASC
+                    LIMIT 3
+                    """
+                    chunks_result = await session.run(chunks_query, doc_id=doc["id"])
+                    chunks = []
+                    async for chunk_rec in chunks_result:
+                        chunks.append({
+                            "content": chunk_rec["content"],
+                            "index": chunk_rec["index"],
+                        })
+                    doc["chunks"] = chunks
+                    documents.append(doc)
+                return documents
+            except Exception as exc:
+                raise Neo4jQueryError(f"Failed to get documents for analysis: {exc}") from exc
+
     async def get_relation_types(self, include_builtin: bool = True) -> list[dict[str, object]]:
         """Get all relation types."""
         async with self.driver.session(database=self._settings.database) as session:
-            where_clause = "" if include_builtin else "NOT t.is_builtin"
-
-            query = f"""
-            MATCH (t:OntologyRelationType)
-            WHERE {where_clause}
-            RETURN t
-            ORDER BY t.is_builtin ASC, t.name ASC
-            """
+            if include_builtin:
+                query = """
+                MATCH (t:OntologyRelationType)
+                RETURN t
+                ORDER BY t.is_builtin ASC, t.name ASC
+                """
+            else:
+                query = """
+                MATCH (t:OntologyRelationType)
+                WHERE NOT t.is_builtin
+                RETURN t
+                ORDER BY t.is_builtin ASC, t.name ASC
+                """
 
             try:
                 result = await session.run(query)
@@ -1601,6 +1960,7 @@ class GraphStore:
             except Exception as exc:
                 raise Neo4jQueryError(f"Failed to count relations: {exc}") from exc
 
+    @with_retry(max_attempts=3, timeout=30.0)
     async def create_relation_type(
         self,
         name: str,
@@ -1654,6 +2014,7 @@ class GraphStore:
             except Exception as exc:
                 raise Neo4jQueryError(f"Failed to create relation type: {exc}") from exc
 
+    @with_retry(max_attempts=3, timeout=30.0)
     async def update_relation_type(
         self,
         name: str,
@@ -1688,6 +2049,7 @@ class GraphStore:
             except Exception as exc:
                 raise Neo4jQueryError(f"Failed to update relation type: {exc}") from exc
 
+    @with_retry(max_attempts=3, timeout=30.0)
     async def delete_relation_type(self, name: str) -> bool:
         """Delete a relation type."""
         async with self.driver.session(database=self._settings.database) as session:
@@ -1957,6 +2319,7 @@ class GraphStore:
             except Exception as exc:
                 raise Neo4jQueryError(f"Failed to get exploration: {exc}") from exc
 
+    @with_retry(max_attempts=3, timeout=30.0)
     async def create_exploration_path(
         self,
         user_id: str,
@@ -2090,6 +2453,240 @@ class GraphStore:
                 return record["new_count"] if record else 0
             except Exception as exc:
                 raise Neo4jQueryError(f"Failed to increment likes: {exc}") from exc
+
+    # ──────────────────────────────────────────
+    # Delete Operations
+    # ──────────────────────────────────────────
+
+    async def delete_node(self, node_id: str) -> bool:
+        """Delete a node and all its relationships.
+
+        Args:
+            node_id: Node ID to delete
+
+        Returns:
+            True if node was deleted, False if not found
+        """
+        async with self.driver.session(database=self._settings.database) as session:
+            query = """
+            MATCH (n {id: $node_id})
+            DETACH DELETE n
+            RETURN count(n) as deleted
+            """
+            try:
+                result = await session.run(query, node_id=node_id)
+                record = await result.single()
+                deleted_count = record["deleted"] if record else 0
+                logger.info("Node deleted: %s, count=%d", node_id, deleted_count)
+                return deleted_count > 0
+            except Exception as exc:
+                raise Neo4jQueryError(f"Failed to delete node: {exc}") from exc
+
+    async def delete_node_and_connected(self, node_id: str, node_label: str) -> dict[str, int]:
+        """Delete a node and all connected nodes and relationships.
+
+        For documents, this deletes:
+        - The document node itself
+        - All chunks linked via HAS_CHUNK relationships
+        - All entities/concepts mentioned in those chunks (via MENTIONS relationships)
+        - All relationships between those entities/concepts
+
+        Note: Since entities are extracted per-chunk with unique UUIDs,
+        the same entity name from different documents will have different UUIDs.
+        This means deleting a document safely removes only its own extracted entities.
+
+        Args:
+            node_id: Node ID to delete
+            node_label: Node label (e.g., "Document", "Chunk")
+
+        Returns:
+            Dictionary with counts of deleted nodes by type
+        """
+        async with self.driver.session(database=self._settings.database) as session:
+            # Delete document and all connected chunks, entities, concepts
+            if node_label == "Document":
+                query = """
+                MATCH (doc:Document {id: $node_id})
+                // Find all chunks belonging to this document
+                OPTIONAL MATCH (doc)-[:HAS_CHUNK]->(chunk:Chunk)
+                // Find all entities/concepts mentioned in these chunks
+                OPTIONAL MATCH (chunk)-[:MENTIONS]->(entity)
+                WHERE entity:Entity OR entity:Concept
+                // Collect for counting
+                WITH doc,
+                     collect(DISTINCT chunk) as chunks_to_delete,
+                     collect(DISTINCT entity) as entities_to_delete
+                // Delete relationships first (DETACH DELETE handles this, but being explicit)
+                FOREACH (chunk IN chunks_to_delete | DETACH DELETE chunk)
+                FOREACH (entity IN entities_to_delete | DETACH DELETE entity)
+                // Finally delete the document
+                DETACH DELETE doc
+                RETURN
+                    1 as documents_deleted,
+                    size(chunks_to_delete) as chunks_deleted,
+                    size(entities_to_delete) as entities_deleted
+                """
+            else:
+                # For other node types, use DETACH DELETE to remove node and all relationships
+                query = """
+                MATCH (n {id: $node_id})
+                DETACH DELETE n
+                RETURN count(n) as deleted
+                """
+
+            try:
+                result = await session.run(query, node_id=node_id)
+                record = await result.single()
+                if not record:
+                    return {"documents_deleted": 0, "chunks_deleted": 0, "entities_deleted": 0}
+
+                if node_label == "Document":
+                    return {
+                        "documents_deleted": record["documents_deleted"],
+                        "chunks_deleted": record["chunks_deleted"],
+                        "entities_deleted": record["entities_deleted"],
+                    }
+                else:
+                    return {"deleted": record["deleted"], "documents_deleted": 0, "chunks_deleted": 0, "entities_deleted": 0}
+
+            except Exception as exc:
+                raise Neo4jQueryError(f"Failed to delete node and connected: {exc}") from exc
+
+    async def delete_document_with_entity_dedup(
+        self,
+        document_id: str,
+    ) -> dict[str, int]:
+        """Delete a document when entity deduplication is enabled.
+
+        This deletes:
+        - The document node
+        - All chunks belonging to the document
+        - MENTIONS relationships from chunks to entities/concepts
+
+        For entities/concepts:
+        - Removes the document from their source_document_ids
+        - Decrements their reference_count
+        - Only deletes the entity if reference_count reaches 0
+
+        Args:
+            document_id: The UUID of the document to delete.
+
+        Returns:
+            Dictionary with counts of deleted nodes.
+        """
+        async with self.driver.session(database=self._settings.database) as session:
+            # Step 1: Delete document, chunks, and update entities
+            query = """
+            MATCH (doc:Document {id: $document_id})
+            // Find all chunks belonging to this document
+            OPTIONAL MATCH (doc)-[:HAS_CHUNK]->(chunk:Chunk)
+            // Find all entities/concepts mentioned in these chunks
+            OPTIONAL MATCH (chunk)-[:MENTIONS]->(entity)
+            WHERE entity:Entity OR entity:Concept
+
+            // Collect chunks and entities
+            WITH doc,
+                 collect(DISTINCT chunk) as chunks,
+                 collect(DISTINCT entity) as entities,
+                 collect(DISTINCT entity.id) as entity_ids
+
+            // Delete chunks (this also deletes MENTIONS relationships)
+            FOREACH (c IN chunks | DETACH DELETE c)
+
+            // Delete the document
+            DETACH DELETE doc
+
+            RETURN
+                1 as documents_deleted,
+                size(chunks) as chunks_deleted,
+                entities as affected_entities,
+                entity_ids as affected_entity_ids
+            """
+
+            try:
+                result = await session.run(query, document_id=document_id)
+                record = await result.single()
+                if not record:
+                    return {"documents_deleted": 0, "chunks_deleted": 0, "entities_updated": 0}
+
+                chunks_deleted = record["chunks_deleted"]
+
+                # Step 2: Update entities - remove document from source_document_ids
+                affected_entities = record["affected_entities"]
+                if affected_entities:
+                    update_query = """
+                    UNWIND $entity_ids AS eid
+                    MATCH (e:Entity {id: eid})
+                    SET e.source_document_ids = [d IN e.source_document_ids WHERE d <> $document_id]
+                    SET e.reference_count = size(e.source_document_ids)
+                    WITH e
+                    WHERE size(e.source_document_ids) = 0
+                    DETACH DELETE e
+                    """
+                    entity_ids = [e.get("id") for e in affected_entities if e]
+                    await session.run(update_query, entity_ids=entity_ids, document_id=document_id)
+
+                # Step 3: Update concepts similarly
+                update_concepts_query = """
+                MATCH (c:Concept)-[:MENTIONS]<-[:HAS_CHUNK]-(doc:Document {id: $document_id})
+                SET c.source_document_ids = [d IN c.source_document_ids WHERE d <> $document_id]
+                SET c.reference_count = size(c.source_document_ids)
+                WITH c
+                WHERE size(c.source_document_ids) = 0
+                DETACH DELETE c
+                """
+                await session.run(update_concepts_query, document_id=document_id)
+
+                entities_updated = len(affected_entities) if affected_entities else 0
+
+                return {
+                    "documents_deleted": record["documents_deleted"],
+                    "chunks_deleted": chunks_deleted,
+                    "entities_updated": entities_updated,
+                }
+
+            except Exception as exc:
+                raise Neo4jQueryError(f"Failed to delete document with entity dedup: {exc}") from exc
+
+    async def delete_document_and_chunks_only(self, document_id: str) -> dict[str, int]:
+        """Delete a document and its chunks, but preserve entities and concepts.
+
+        This is useful when entities might be shared across documents
+        (e.g., in a future implementation with entity deduplication by name).
+
+        Args:
+            document_id: The UUID of the document to delete.
+
+        Returns:
+            Dictionary with counts of deleted nodes.
+        """
+        async with self.driver.session(database=self._settings.database) as session:
+            query = """
+            MATCH (doc:Document {id: $document_id})
+            OPTIONAL MATCH (doc)-[:HAS_CHUNK]->(chunk:Chunk)
+            WITH doc, collect(DISTINCT chunk) as chunks_to_delete
+            // Delete only chunks (DETACH DELETE removes their relationships too)
+            FOREACH (chunk IN chunks_to_delete | DETACH DELETE chunk)
+            // Delete the document (DETACH DELETE removes HAS_CHUNK relationships)
+            DETACH DELETE doc
+            RETURN
+                1 as documents_deleted,
+                size(chunks_to_delete) as chunks_deleted
+            """
+
+            try:
+                result = await session.run(query, document_id=document_id)
+                record = await result.single()
+                if not record:
+                    return {"documents_deleted": 0, "chunks_deleted": 0}
+
+                return {
+                    "documents_deleted": record["documents_deleted"],
+                    "chunks_deleted": record["chunks_deleted"],
+                }
+
+            except Exception as exc:
+                raise Neo4jQueryError(f"Failed to delete document and chunks: {exc}") from exc
 
     async def create_exploration_share_token(
         self,
@@ -2571,3 +3168,170 @@ class GraphStore:
     ) -> None:
         """Execute a parameterized batch write within a managed transaction."""
         await tx.run(cypher, batch=batch)
+
+    # ──────────────────────────────────────────
+    # Simulation Session Management
+    # ──────────────────────────────────────────
+
+    async def get_simulation_sessions(
+        self,
+        status_filter: str | None = None,
+        limit: int = 20,
+    ) -> list[dict[str, object]]:
+        """Get all simulation sessions with optional status filtering."""
+        async with self.driver.session(database=self._settings.database) as session:
+            query = """
+            MATCH (s:SimulationSession)
+            WHERE $status_filter IS NULL OR s.status = $status_filter
+            OPTIONAL MATCH (s)-[:HAS_AGENT]->(a:Agent)
+            OPTIONAL MATCH (s)-[:HAS_INTERACTION]->(i:Interaction)
+            OPTIONAL MATCH (s)-[:HAS_MEMORY]->(m:Memory)
+            RETURN
+                s.id as id,
+                s.name as name,
+                s.status as status,
+                s.agent_count as agent_count,
+                s.platforms as platforms,
+                s.created_at as created_at,
+                s.current_step as current_step,
+                s.total_steps as total_steps,
+                count(DISTINCT a) as actual_agents,
+                count(DISTINCT i) as total_interactions,
+                count(DISTINCT m) as total_memories
+            ORDER BY s.created_at DESC
+            LIMIT $limit
+            """
+            try:
+                result = await session.run(query, status_filter=status_filter, limit=limit)
+                sessions = []
+                async for record in result:
+                    session_data = dict(record)
+                    session_data['platforms'] = list(session_data.get('platforms', []))
+                    sessions.append(session_data)
+                return sessions
+            except Exception as exc:
+                raise Neo4jQueryError(f"Failed to get simulation sessions: {exc}") from exc
+
+    async def get_simulation_session_by_id(self, session_id: str) -> dict | None:
+        """Get a simulation session by ID."""
+        async with self.driver.session(database=self._settings.database) as session:
+            query = """
+            MATCH (s:SimulationSession {id: $session_id})
+            OPTIONAL MATCH (s)-[:HAS_AGENT]->(a:Agent)
+            OPTIONAL MATCH (s)-[:HAS_INTERACTION]->(i:Interaction)
+            OPTIONAL MATCH (s)-[:HAS_MEMORY]->(m:Memory)
+            RETURN
+                s.id as id,
+                s.name as name,
+                s.status as status,
+                s.agent_count as agent_count,
+                s.platforms as platforms,
+                s.created_at as created_at,
+                s.current_step as current_step,
+                s.total_steps as total_steps,
+                count(DISTINCT a) as actual_agents,
+                count(DISTINCT i) as total_interactions,
+                count(DISTINCT m) as total_memories
+            """
+            try:
+                result = await session.run(query, session_id=session_id)
+                record = await result.single()
+                if record:
+                    session_data = dict(record)
+                    session_data['platforms'] = list(session_data.get('platforms', []))
+                    return session_data
+                return None
+            except Exception as exc:
+                raise Neo4jQueryError(f"Failed to get simulation session: {exc}") from exc
+
+    async def create_simulation_session(
+        self,
+        name: str,
+        agent_count: int = 10,
+        platforms: list[str] | None = None,
+        total_steps: int = 100,
+        created_by: str = "system",
+    ) -> dict[str, object]:
+        """Create a new simulation session."""
+        import uuid
+        from datetime import datetime
+
+        async with self.driver.session(database=self._settings.database) as session:
+            session_id = str(uuid.uuid4())
+            now = datetime.utcnow().isoformat()
+            platforms = platforms or []
+
+            query = """
+            CREATE (s:SimulationSession {
+                id: $id,
+                name: $name,
+                status: 'INITIALIZING',
+                agent_count: $agent_count,
+                platforms: $platforms,
+                created_at: $now,
+                created_by: $created_by,
+                current_step: 0,
+                total_steps: $total_steps,
+                updated_at: $now
+            })
+            RETURN s
+            """
+            try:
+                result = await session.run(
+                    query,
+                    id=session_id,
+                    name=name,
+                    agent_count=agent_count,
+                    platforms=platforms,
+                    now=now,
+                    created_by=created_by,
+                    total_steps=total_steps,
+                )
+                record = await result.single()
+                return dict(record["s"]) if record else {}
+            except Exception as exc:
+                raise Neo4jQueryError(f"Failed to create simulation session: {exc}") from exc
+
+    async def delete_simulation_session(self, session_id: str) -> bool:
+        """Delete a simulation session and all related data."""
+        async with self.driver.session(database=self._settings.database) as session:
+            query = """
+            MATCH (s:SimulationSession {id: $session_id})
+            DETACH DELETE s
+            """
+            try:
+                await session.run(query, session_id=session_id)
+                return True
+            except Exception as exc:
+                raise Neo4jQueryError(f"Failed to delete simulation session: {exc}") from exc
+
+    async def update_simulation_session_status(
+        self,
+        session_id: str,
+        status: str,
+        current_step: int | None = None,
+    ) -> dict[str, object]:
+        """Update simulation session status."""
+        from datetime import datetime
+
+        async with self.driver.session(database=self._settings.database) as session:
+            now = datetime.utcnow().isoformat()
+
+            query = """
+            MATCH (s:SimulationSession {id: $session_id})
+            SET s.status = $status,
+                s.updated_at = $now
+            """
+            params = {"session_id": session_id, "status": status, "now": now}
+            if current_step is not None:
+                query += ", s.current_step = $current_step"
+                params["current_step"] = current_step
+
+            query += " RETURN s"
+
+            try:
+                result = await session.run(query, **params)
+                record = await result.single()
+                return dict(record["s"]) if record else {}
+            except Exception as exc:
+                raise Neo4jQueryError(f"Failed to update simulation session: {exc}") from exc

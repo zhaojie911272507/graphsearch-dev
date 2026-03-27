@@ -28,6 +28,12 @@ class AppSettings(BaseSettings):
     app_env: AppEnvironment = Field(default=AppEnvironment.DEVELOPMENT)
     app_debug: bool = Field(default=False)
     log_level: str = Field(default="INFO")
+    domain_auto_bootstrap: bool = Field(
+        default=True,
+        description="When true, ensure an active Domain exists at startup and via GET /domains/active.",
+    )
+    default_domain_key: str = Field(default="default", min_length=1, max_length=128)
+    default_domain_name: str = Field(default="默认领域", min_length=1, max_length=256)
 
 
 class Neo4jSettings(BaseSettings):
@@ -105,6 +111,32 @@ class ExtractionSettings(BaseSettings):
     chunk_overlap: int = Field(default=64, ge=0)
 
 
+class RetrySettings(BaseSettings):
+    """Retry configuration for database operations."""
+
+    model_config = SettingsConfigDict(env_prefix="RETRY_", env_file=".env", extra="ignore")
+
+    max_attempts: int = Field(default=3, ge=1, le=10)
+    timeout: float = Field(default=30.0, ge=1.0, le=300.0)
+    retry_delay: float = Field(default=1.0, ge=0.1, le=10.0)
+    backoff_factor: float = Field(default=2.0, ge=1.0, le=5.0)
+
+
+class SimulationSettings(BaseSettings):
+    """Social simulation configuration."""
+
+    model_config = SettingsConfigDict(env_prefix="SIMULATION_", env_file=".env", extra="ignore")
+
+    max_agents: int = Field(default=50, ge=1, le=500)
+    memory_decay_rate: float = Field(default=0.1, ge=0.0, le=1.0)
+    interaction_probability: float = Field(default=0.3, ge=0.0, le=1.0)
+    platform_sync_interval: int = Field(default=60, ge=10, le=3600)
+    simulation_speed: float = Field(default=1.0, ge=0.1, le=100.0)
+    enable_emotion: bool = Field(default=True)
+    enable_memory_formation: bool = Field(default=True)
+    enable_relationship_evolution: bool = Field(default=True)
+
+
 class Settings(BaseSettings):
     """Aggregated application settings — single source of truth."""
 
@@ -116,6 +148,8 @@ class Settings(BaseSettings):
     embedding: EmbeddingSettings = Field(default_factory=EmbeddingSettings)
     retrieval: RetrievalSettings = Field(default_factory=RetrievalSettings)
     extraction: ExtractionSettings = Field(default_factory=ExtractionSettings)
+    retry: RetrySettings = Field(default_factory=RetrySettings)
+    simulation: SimulationSettings = Field(default_factory=SimulationSettings)
 
 
 def get_settings() -> Settings:

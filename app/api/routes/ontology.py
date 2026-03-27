@@ -24,6 +24,8 @@ from app.api.schemas.ontology import (
     RelationTypeSchema,
     RelationTypeUpdateSchema,
 )
+from app.persistence.audit_log import AuditLogger
+from app.domain.audit import AuditAction
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +101,16 @@ async def create_entity_type(
             extraction_prompt_template=entity_type.extraction_prompt_template,
         )
 
+        # Log audit event
+        audit_logger = AuditLogger(store, store._settings)
+        await audit_logger.log_event(
+            action=AuditAction.ENTITY_TYPE_CREATED,
+            user_id="current_user",
+            resource_type="entity_type",
+            resource_id=entity_type.name,
+            changes=entity_type.model_dump(),
+        )
+
         return EntityTypeSchema(
             name=created["name"],
             description=created["description"],
@@ -158,6 +170,16 @@ async def update_entity_type(
 
         instance_count = await store.count_entity_instances(type_name)
 
+        # Log audit event
+        audit_logger = AuditLogger(store, store._settings)
+        await audit_logger.log_event(
+            action=AuditAction.ENTITY_TYPE_UPDATED,
+            user_id="current_user",
+            resource_type="entity_type",
+            resource_id=type_name,
+            changes=entity_type.model_dump(),
+        )
+
         return EntityTypeSchema(
             name=updated["name"],
             description=updated["description"],
@@ -210,6 +232,16 @@ async def delete_entity_type(
             )
 
         await store.delete_entity_type(type_name)
+
+        # Log audit event
+        audit_logger = AuditLogger(store, store._settings)
+        await audit_logger.log_event(
+            action=AuditAction.ENTITY_TYPE_DELETED,
+            user_id="current_user",
+            resource_type="entity_type",
+            resource_id=type_name,
+            changes={"deleted": True},
+        )
     except HTTPException:
         raise
     except Exception as exc:
@@ -290,6 +322,16 @@ async def create_relation_type(
             extraction_prompt=relation_type.extraction_prompt,
         )
 
+        # Log audit event
+        audit_logger = AuditLogger(store, store._settings)
+        await audit_logger.log_event(
+            action=AuditAction.RELATION_TYPE_CREATED,
+            user_id="current_user",
+            resource_type="relation_type",
+            resource_id=relation_type.name,
+            changes=relation_type.model_dump(),
+        )
+
         return RelationTypeSchema(
             name=created["name"],
             description=created["description"],
@@ -353,6 +395,16 @@ async def update_relation_type(
 
         instance_count = await store.count_relation_instances(type_name)
 
+        # Log audit event
+        audit_logger = AuditLogger(store, store._settings)
+        await audit_logger.log_event(
+            action=AuditAction.RELATION_TYPE_UPDATED,
+            user_id="current_user",
+            resource_type="relation_type",
+            resource_id=type_name,
+            changes=relation_type.model_dump(),
+        )
+
         return RelationTypeSchema(
             name=updated["name"],
             description=updated["description"],
@@ -405,6 +457,16 @@ async def delete_relation_type(
             )
 
         await store.delete_relation_type(type_name)
+
+        # Log audit event
+        audit_logger = AuditLogger(store, store._settings)
+        await audit_logger.log_event(
+            action=AuditAction.RELATION_TYPE_DELETED,
+            user_id="current_user",
+            resource_type="relation_type",
+            resource_id=type_name,
+            changes={"deleted": True},
+        )
     except HTTPException:
         raise
     except Exception as exc:
@@ -471,6 +533,16 @@ async def create_ontology_version(
             change_summary=version.change_summary,
             changes=version.changes,
             created_by="current_user",
+        )
+
+        # Log audit event
+        audit_logger = AuditLogger(store, store._settings)
+        await audit_logger.log_event(
+            action=AuditAction.ONTOLOGY_VERSION_CREATED,
+            user_id="current_user",
+            resource_type="ontology",
+            resource_id=version.version,
+            changes=version.model_dump(),
         )
 
         return OntologyVersionSchema(
@@ -540,6 +612,17 @@ async def rollback_ontology_version(
 
         result = await store.rollback_ontology_to_version(version)
 
+        if result:
+            # Log audit event
+            audit_logger = AuditLogger(store, store._settings)
+            await audit_logger.log_event(
+                action=AuditAction.ONTOLOGY_VERSION_ROLLBACK,
+                user_id="current_user",
+                resource_type="ontology",
+                resource_id=version,
+                changes={"rollback_to": version},
+            )
+
         return {
             "success": result,
             "message": f"Rolled back to version {version}",
@@ -552,4 +635,207 @@ async def rollback_ontology_version(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to rollback ontology: {exc}",
+        ) from exc
+
+
+@router.post(
+    "/recommend",
+    response_model=dict,
+    summary="AI-powered ontology recommendation",
+    description="Analyze documents using LLM to recommend entity types and relation types.",
+)
+async def recommend_ontology(
+    store: GraphStoreDep,
+    request: dict,
+) -> dict:
+    """Get AI-powered ontology recommendations based on document analysis.
+
+    Request body:
+    - documents: List of documents to analyze (or use existing documents from DB)
+    - max_entity_types: Maximum number of entity types to recommend (default: 10)
+    - max_relation_types: Maximum number of relation types to recommend (default: 8)
+    - domain_key: Optional domain key to consider existing ontology
+    """
+    try:
+        from app.config import get_settings
+        from app.services.ontology_recommender import OntologyRecommendationAgent
+
+        documents = request.get("documents", [])
+        max_entity_types = request.get("max_entity_types", 10)
+        max_relation_types = request.get("max_relation_types", 8)
+        domain_key = request.get("domain_key")
+
+        # If no documents provided, fetch from database
+        if not documents:
+            # Fetch recent documents
+            docs_result = await store.get_documents_for_analysis(limit=10)
+            documents = docs_result
+
+        if not documents:
+            return {
+                "success": False,
+                "message": "No documents available for analysis",
+                "recommendations": {
+                    "entity_types": [],
+                    "relation_types": [],
+                    "analysis_summary": "No documents to analyze",
+                },
+            }
+
+        # Get existing ontology if domain specified
+        if domain_key:
+            existing_entities = await store.get_entity_types(include_builtin=False)
+            existing_relations = await store.get_relation_types(include_builtin=False)
+        else:
+            existing_entities = []
+            existing_relations = []
+
+        # Create recommendation agent and get recommendations
+        settings = get_settings()
+        agent = OntologyRecommendationAgent(settings.openai)
+
+        if domain_key:
+            recommendation = await agent.analyze_domain_with_context(
+                domain_key=domain_key,
+                existing_entity_types=existing_entities,
+                existing_relation_types=existing_relations,
+                documents=documents,
+                max_recommendations=max_entity_types,
+            )
+        else:
+            recommendation = await agent.analyze_and_recommend(
+                documents=documents,
+                max_entity_types=max_entity_types,
+                max_relation_types=max_relation_types,
+            )
+
+        return {
+            "success": True,
+            "domain_context": recommendation.domain_context,
+            "analysis_summary": recommendation.analysis_summary,
+            "confidence_score": recommendation.confidence_score,
+            "recommendations": {
+                "entity_types": recommendation.recommended_entity_types,
+                "relation_types": recommendation.recommended_relation_types,
+            },
+            "existing_count": {
+                "entity_types": len(existing_entities),
+                "relation_types": len(existing_relations),
+            },
+        }
+
+    except Exception as exc:
+        logger.exception("Ontology recommendation failed: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Ontology recommendation failed: {exc}",
+        ) from exc
+
+
+@router.post(
+    "/recommendations/apply",
+    response_model=dict,
+    summary="Apply recommended ontology types",
+    description="Create entity types and relation types from recommendations.",
+)
+async def apply_ontology_recommendations(
+    store: GraphStoreDep,
+    request: dict,
+) -> dict:
+    """Apply recommended ontology types to the database.
+
+    Request body:
+    - entity_types: List of entity type recommendations to apply
+    - relation_types: List of relation type recommendations to apply
+    """
+    try:
+        from app.persistence.audit_log import AuditLogger
+        from app.domain.audit import AuditAction
+
+        entity_types_to_create = request.get("entity_types", [])
+        relation_types_to_create = request.get("relation_types", [])
+
+        created_entities = []
+        created_relations = []
+
+        # Create entity types
+        for et in entity_types_to_create:
+            try:
+                created = await store.create_entity_type(
+                    name=et.get("name", ""),
+                    description=et.get("description", ""),
+                    color=et.get("color", "#58a6ff"),
+                    icon=et.get("icon", "circle"),
+                    extraction_prompt_template=et.get("extraction_prompt_template", ""),
+                )
+                if created:
+                    created_entities.append(created)
+            except Exception as e:
+                logger.warning(f"Failed to create entity type {et.get('name')}: {e}")
+
+        # Create relation types
+        for rt in relation_types_to_create:
+            try:
+                created = await store.create_relation_type(
+                    name=rt.get("name", ""),
+                    description=rt.get("description", ""),
+                    source_types=rt.get("source_types", []),
+                    target_types=rt.get("target_types", []),
+                    directionality=rt.get("directionality", "DIRECTED"),
+                    extraction_prompt=rt.get("extraction_prompt", ""),
+                )
+                if created:
+                    created_relations.append(created)
+            except Exception as e:
+                logger.warning(f"Failed to create relation type {rt.get('name')}: {e}")
+
+        # Log audit event
+        audit_logger = AuditLogger(store, store._settings)
+        await audit_logger.log_event(
+            action=AuditAction.ONTOLOGY_VERSION_CREATED,
+            user_id="current_user",
+            resource_type="ontology",
+            resource_id="ai_recommendation",
+            changes={
+                "created_entities": [e.get("name") for e in created_entities],
+                "created_relations": [r.get("name") for r in created_relations],
+            },
+        )
+
+        return {
+            "success": True,
+            "message": f"Created {len(created_entities)} entity types and {len(created_relations)} relation types",
+            "created": {
+                "entity_types": created_entities,
+                "relation_types": created_relations,
+            },
+        }
+
+    except Exception as exc:
+        logger.exception("Apply recommendations failed: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to apply recommendations: {exc}",
+        ) from exc
+
+
+@router.get(
+    "/documents/for-analysis",
+    response_model=list,
+    summary="Get documents for analysis",
+    description="Get documents suitable for AI-powered ontology recommendation.",
+)
+async def get_documents_for_analysis(
+    store: GraphStoreDep,
+    limit: int = Query(default=10, ge=1, le=50),
+) -> list:
+    """Get documents suitable for ontology analysis."""
+    try:
+        docs = await store.get_documents_for_analysis(limit=limit)
+        return docs
+    except Exception as exc:
+        logger.exception("Failed to get documents for analysis: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get documents: {exc}",
         ) from exc

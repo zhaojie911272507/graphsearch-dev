@@ -13,15 +13,15 @@ class GraphNodeSchema(BaseModel):
     """
 
     id: str = Field(..., description="Unique node identifier (UUID string)")
-    label: str = Field(..., description="Node type: Document, Chunk, Entity, Concept")
-    title: str = Field(
+    type: str = Field(..., description="Node type: Document, Chunk, Entity, Concept")
+    label: str = Field(..., description="Short label for display on the node")
+    name: str = Field(
         default="",
         description="Human-readable display text (e.g., document title, entity name)",
     )
-    content_preview: str = Field(
-        default="",
-        max_length=200,
-        description="Truncated content for tooltip or detail view",
+    quality_score: float | None = Field(
+        default=None,
+        description="Optional quality score for the node",
     )
 
 
@@ -30,7 +30,7 @@ class GraphEdgeSchema(BaseModel):
 
     source: str = Field(..., description="Source node ID")
     target: str = Field(..., description="Target node ID")
-    relation_type: str = Field(
+    label: str = Field(
         ...,
         description="Relationship type: HAS_CHUNK, MENTIONS, RELATED_TO, etc.",
     )

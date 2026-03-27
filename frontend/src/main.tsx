@@ -4,22 +4,13 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { BrowserRouter } from 'react-router-dom'
 import App from './App'
 import { ErrorBoundary } from './components/ErrorBoundary'
+import { ThemeProvider } from './contexts/ThemeContext'
+import { ToastProvider } from './contexts/ToastContext'
 import './index.css'
 
-console.log('main.tsx loaded')
-
-// Test: Add a visible element to check if React is rendering
-const testDiv = document.createElement('div')
-testDiv.textContent = 'React is running - if you see this, main.tsx is working'
-testDiv.style.position = 'fixed'
-testDiv.style.top = '0'
-testDiv.style.left = '0'
-testDiv.style.backgroundColor = 'red'
-testDiv.style.color = 'white'
-testDiv.style.zIndex = '9999'
-testDiv.style.padding = '10px'
-testDiv.style.fontSize = '16px'
-document.body.appendChild(testDiv)
+const urlBase = import.meta.env.BASE_URL
+const routerBasename =
+  urlBase === '/' ? undefined : urlBase.replace(/\/$/, '')
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -32,12 +23,16 @@ const queryClient = new QueryClient({
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        <ErrorBoundary>
-          <App />
-        </ErrorBoundary>
-      </BrowserRouter>
-    </QueryClientProvider>
+    <ThemeProvider defaultTheme="dark">
+      <QueryClientProvider client={queryClient}>
+        <BrowserRouter basename={routerBasename}>
+          <ToastProvider>
+            <ErrorBoundary>
+              <App />
+            </ErrorBoundary>
+          </ToastProvider>
+        </BrowserRouter>
+      </QueryClientProvider>
+    </ThemeProvider>
   </React.StrictMode>,
 )
