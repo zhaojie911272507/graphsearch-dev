@@ -16,6 +16,7 @@ from fastapi.responses import RedirectResponse, Response
 from prometheus_client import CONTENT_TYPE_LATEST
 
 from app.observability.metrics import MetricsRegistry
+from app.observability.tracing import TracingSetup
 
 from app.api.routes import ingest, query
 from app.api.routes import metadata, ontology, intelligence, evaluation, domains, audit, documents, simulation
@@ -70,6 +71,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     log = structlog.get_logger("lifespan")
     await log.ainfo("Starting Graph RAG system", env=settings.app.app_env)
 
+    # Initialize OpenTelemetry tracing
+    TracingSetup.initialize(settings)
+    TracingSetup.instrument_app(app)
+
     # Embedding service (singleton)
     embedding_service = EmbeddingService(settings.embedding)
     try:
@@ -122,6 +127,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await log.ainfo("Shutting down Graph RAG system")
     await graph_store.__aexit__(None, None, None)
     EmbeddingService.reset()
+    TracingSetup.shutdown()
     await log.ainfo("Shutdown complete")
 
 
