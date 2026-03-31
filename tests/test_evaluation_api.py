@@ -9,8 +9,9 @@ from app.main import app
 
 
 @pytest.fixture
-def client():
-    """Create FastAPI test client."""
+def client(mock_graph_store):
+    """Create FastAPI test client with mocked graph store."""
+    app.state.graph_store = mock_graph_store
     return TestClient(app)
 
 
@@ -53,222 +54,207 @@ def mock_graph_store():
 class TestEvaluationMetrics:
     def test_get_metrics_default_days(self, client, mock_graph_store):
         """Test getting evaluation metrics with default 7 days."""
-        with patch("app.api.routes.evaluation.GraphStore", return_value=mock_graph_store):
-            response = client.get("/api/v1/evaluation/metrics")
+        response = client.get("/api/v1/evaluation/metrics")
 
-            assert response.status_code == 200
-            data = response.json()
-            assert "metrics" in data
-            assert "precision" in data["metrics"]
-            assert data["metrics"]["precision"]["value"] == 0.72
-            assert data["evaluated_queries"] == 100
+        assert response.status_code == 200
+        data = response.json()
+        assert "metrics" in data
+        assert "precision" in data["metrics"]
+        assert data["metrics"]["precision"]["value"] == 0.72
+        assert data["evaluated_queries"] == 100
 
     def test_get_metrics_custom_days(self, client, mock_graph_store):
         """Test getting evaluation metrics with custom days parameter."""
-        with patch("app.api.routes.evaluation.GraphStore", return_value=mock_graph_store):
-            response = client.get("/api/v1/evaluation/metrics?days=30")
+        response = client.get("/api/v1/evaluation/metrics?days=30")
 
-            assert response.status_code == 200
-            # Verify the mock was called with correct parameter
-            mock_graph_store.get_evaluation_metrics.assert_called_once_with(days=30)
+        assert response.status_code == 200
+        # Verify the mock was called with correct parameter
+        mock_graph_store.get_evaluation_metrics.assert_called_once_with(days=30)
 
     def test_get_metrics_structure(self, client, mock_graph_store):
         """Test that metrics response has correct structure."""
-        with patch("app.api.routes.evaluation.GraphStore", return_value=mock_graph_store):
-            response = client.get("/api/v1/evaluation/metrics")
+        response = client.get("/api/v1/evaluation/metrics")
 
-            data = response.json()
-            assert set(data["metrics"].keys()) == {"precision", "recall", "faithfulness", "relevance"}
-            for metric in data["metrics"].values():
-                assert "value" in metric
-                assert isinstance(metric["value"], (int, float))
+        data = response.json()
+        assert set(data["metrics"].keys()) == {"precision", "recall", "faithfulness", "relevance"}
+        for metric in data["metrics"].values():
+            assert "value" in metric
+            assert isinstance(metric["value"], (int, float))
 
 
 class TestAblationStudy:
     def test_get_ablation_study(self, client, mock_graph_store):
         """Test getting ablation study comparing vector-only vs hybrid."""
-        with patch("app.api.routes.evaluation.GraphStore", return_value=mock_graph_store):
-            response = client.get("/api/v1/evaluation/ablation-study")
+        response = client.get("/api/v1/evaluation/ablation-study")
 
-            assert response.status_code == 200
-            data = response.json()
-            assert "vector_only" in data
-            assert "hybrid" in data
-            assert "improvement" in data
+        assert response.status_code == 200
+        data = response.json()
+        assert "vector_only" in data
+        assert "hybrid" in data
+        assert "improvement" in data
 
-            # Check improvement calculations
-            assert data["improvement"]["precision"] == 10.8
-            assert data["improvement"]["recall"] == 14.1
+        # Check improvement calculations
+        assert data["improvement"]["precision"] == 10.8
+        assert data["improvement"]["recall"] == 14.1
 
     def test_ablation_study_metrics_present(self, client, mock_graph_store):
         """Test that all expected metrics are present in ablation study."""
-        with patch("app.api.routes.evaluation.GraphStore", return_value=mock_graph_store):
-            response = client.get("/api/v1/evaluation/ablation-study")
+        response = client.get("/api/v1/evaluation/ablation-study")
 
-            data = response.json()
-            for mode in ["vector_only", "hybrid"]:
-                assert "precision" in data[mode]
-                assert "recall" in data[mode]
-                assert "faithfulness" in data[mode]
-                assert "relevance" in data[mode]
+        data = response.json()
+        for mode in ["vector_only", "hybrid"]:
+            assert "precision" in data[mode]
+            assert "recall" in data[mode]
+            assert "faithfulness" in data[mode]
+            assert "relevance" in data[mode]
 
 
 class TestQueryEvaluations:
     def test_get_query_evaluations_default(self, client, mock_graph_store):
         """Test getting individual query evaluations with defaults."""
         mock_graph_store.get_query_evaluations.return_value = [
-            {
-                "id": "eval-1",
-                "question": "What is Graph RAG?",
-                "context_precision": 0.8,
-                "context_recall": 0.9,
-            }
+        {
+            "id": "eval-1",
+            "question": "What is Graph RAG?",
+            "context_precision": 0.8,
+            "context_recall": 0.9,
+        }
         ]
 
-        with patch("app.api.routes.evaluation.GraphStore", return_value=mock_graph_store):
-            response = client.get("/api/v1/evaluation/query-evaluations")
+        response = client.get("/api/v1/evaluation/query-evaluations")
 
-            assert response.status_code == 200
-            data = response.json()
-            assert len(data) == 1
-            assert data[0]["context_precision"] == 0.8
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 1
+        assert data[0]["context_precision"] == 0.8
 
     def test_get_query_evaluations_filtered(self, client, mock_graph_store):
         """Test getting query evaluations with filters."""
-        with patch("app.api.routes.evaluation.GraphStore", return_value=mock_graph_store):
-            response = client.get(
-                "/api/v1/evaluation/query-evaluations?days=14&min_precision=0.7&limit=50"
-            )
+        response = client.get(
+            "/api/v1/evaluation/query-evaluations?days=14&min_precision=0.7&limit=50"
+        )
 
-            assert response.status_code == 200
-            mock_graph_store.get_query_evaluations.assert_called_once_with(
-                days=14,
-                min_precision=0.7,
-                limit=50,
-            )
+        assert response.status_code == 200
+        mock_graph_store.get_query_evaluations.assert_called_once_with(
+            days=14,
+            min_precision=0.7,
+            limit=50,
+        )
 
 
 class TestPipelineConfigs:
     def test_get_pipeline_configs(self, client, mock_graph_store):
         """Test retrieving all pipeline configurations."""
         mock_graph_store.get_pipeline_configs.return_value = [
-            {
-                "version": "v1.0",
-                "is_active": True,
-                "created_at": "2026-03-24T00:00:00Z",
-            },
-            {
-                "version": "v1.1",
-                "is_active": False,
-                "created_at": "2026-03-23T00:00:00Z",
-            },
+        {
+            "version": "v1.0",
+            "is_active": True,
+            "created_at": "2026-03-24T00:00:00Z",
+        },
+        {
+            "version": "v1.1",
+            "is_active": False,
+            "created_at": "2026-03-23T00:00:00Z",
+        },
         ]
 
-        with patch("app.api.routes.evaluation.GraphStore", return_value=mock_graph_store):
-            response = client.get("/api/v1/evaluation/pipeline/configs")
+        response = client.get("/api/v1/evaluation/pipeline/configs")
 
-            assert response.status_code == 200
-            data = response.json()
-            assert len(data) == 2
-            assert data[0]["version"] == "v1.0"
-            assert data[0]["is_active"] is True
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 2
+        assert data[0]["version"] == "v1.0"
+        assert data[0]["is_active"] is True
 
     def test_create_pipeline_config(self, client, mock_graph_store):
         """Test creating a new pipeline configuration."""
         config_data = {
-            "version": "v2.0",
-            "retrieval": {"top_k": 10, "use_hybrid": True},
-            "generation": {"model": "gpt-4", "temperature": 0.7},
-            "created_by": "test-user",
-            "change_summary": "Added hybrid retrieval",
+        "version": "v2.0",
+        "retrieval": {"top_k": 10, "use_hybrid": True},
+        "generation": {"model": "gpt-4", "temperature": 0.7},
+        "created_by": "test-user",
+        "change_summary": "Added hybrid retrieval",
         }
 
-        with patch("app.api.routes.evaluation.GraphStore", return_value=mock_graph_store):
-            response = client.post(
-                "/api/v1/evaluation/pipeline/configs",
-                json=config_data,
-            )
+        response = client.post(
+            "/api/v1/evaluation/pipeline/configs",
+            json=config_data,
+        )
 
-            assert response.status_code == 200
-            mock_graph_store.create_pipeline_config.assert_called_once()
+        assert response.status_code == 200
+        mock_graph_store.create_pipeline_config.assert_called_once()
 
     def test_activate_pipeline_config(self, client, mock_graph_store):
         """Test activating a pipeline configuration."""
-        with patch("app.api.routes.evaluation.GraphStore", return_value=mock_graph_store):
-            response = client.post(
-                "/api/v1/evaluation/pipeline/configs/v2.0/activate"
-            )
+        response = client.post(
+            "/api/v1/evaluation/pipeline/configs/v2.0/activate"
+        )
 
-            assert response.status_code == 200
-            assert response.json() is True
-            mock_graph_store.activate_pipeline_config.assert_called_once_with("v2.0")
+        assert response.status_code == 200
+        assert response.json() is True
+        mock_graph_store.activate_pipeline_config.assert_called_once_with("v2.0")
 
 
 class TestPromptTemplates:
     def test_get_prompt_templates_all(self, client, mock_graph_store):
         """Test retrieving all prompt templates."""
         mock_graph_store.get_prompt_templates.return_value = [
-            {
-                "id": "template-1",
-                "template_type": "retrieval",
-                "content": "Retrieve relevant context...",
-                "is_active": True,
-            }
+        {
+            "id": "template-1",
+            "template_type": "retrieval",
+            "content": "Retrieve relevant context...",
+            "is_active": True,
+        }
         ]
 
-        with patch("app.api.routes.evaluation.GraphStore", return_value=mock_graph_store):
-            response = client.get("/api/v1/evaluation/prompts")
+        response = client.get("/api/v1/evaluation/prompts")
 
-            assert response.status_code == 200
-            data = response.json()
-            assert len(data) == 1
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 1
 
     def test_get_prompt_templates_filtered(self, client, mock_graph_store):
         """Test retrieving prompt templates filtered by type."""
-        with patch("app.api.routes.evaluation.GraphStore", return_value=mock_graph_store):
-            response = client.get("/api/v1/evaluation/prompts?template_type=retrieval")
+        response = client.get("/api/v1/evaluation/prompts?template_type=retrieval")
 
-            assert response.status_code == 200
-            mock_graph_store.get_prompt_templates.assert_called_once_with(
-                template_type="retrieval"
-            )
+        assert response.status_code == 200
+        mock_graph_store.get_prompt_templates.assert_called_once_with(
+            template_type="retrieval"
+        )
 
     def test_create_prompt_template(self, client, mock_graph_store):
         """Test creating a new prompt template."""
         template_data = {
-            "template_type": "generation",
-            "content": "Generate answer based on context...",
-            "variables": ["context", "question"],
-            "created_by": "test-user",
+        "template_type": "generation",
+        "content": "Generate answer based on context...",
+        "variables": ["context", "question"],
+        "created_by": "test-user",
         }
 
-        with patch("app.api.routes.evaluation.GraphStore", return_value=mock_graph_store):
-            response = client.post(
-                "/api/v1/evaluation/prompts",
-                json=template_data,
-            )
+        response = client.post(
+            "/api/v1/evaluation/prompts",
+            json=template_data,
+        )
 
-            assert response.status_code == 200
-            mock_graph_store.create_prompt_template.assert_called_once()
+        assert response.status_code == 200
+        mock_graph_store.create_prompt_template.assert_called_once()
 
 
 class TestMetricsValidation:
     def test_metrics_values_in_range(self, client, mock_graph_store):
         """Test that metric values are within valid range [0, 1]."""
-        with patch("app.api.routes.evaluation.GraphStore", return_value=mock_graph_store):
-            response = client.get("/api/v1/evaluation/metrics")
+        response = client.get("/api/v1/evaluation/metrics")
 
-            data = response.json()
-            for metric_name, metric_data in data["metrics"].items():
-                value = metric_data["value"]
-                assert 0 <= value <= 1, f"{metric_name} value {value} out of range [0, 1]"
+        data = response.json()
+        for metric_name, metric_data in data["metrics"].items():
+            value = metric_data["value"]
+            assert 0 <= value <= 1, f"{metric_name} value {value} out of range [0, 1]"
 
     def test_improvement_percentages(self, client, mock_graph_store):
         """Test that improvement percentages are calculated correctly."""
-        with patch("app.api.routes.evaluation.GraphStore", return_value=mock_graph_store):
-            response = client.get("/api/v1/evaluation/ablation-study")
+        response = client.get("/api/v1/evaluation/ablation-study")
 
-            data = response.json()
-            for metric, improvement in data["improvement"].items():
-                assert isinstance(improvement, (int, float))
-                assert improvement >= 0  # Improvements should be positive
+        data = response.json()
+        for metric, improvement in data["improvement"].items():
+            assert isinstance(improvement, (int, float))
+            assert improvement >= 0  # Improvements should be positive

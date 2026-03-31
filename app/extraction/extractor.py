@@ -14,12 +14,6 @@ import uuid
 from uuid import UUID
 
 from langchain_openai import ChatOpenAI
-from tenacity import (
-    retry,
-    retry_if_exception_type,
-    stop_after_attempt,
-    wait_exponential,
-)
 
 from app.config import ExtractionSettings, OpenAISettings
 from app.domain.enums import EntityType, RelationType
@@ -130,12 +124,6 @@ class GraphExtractor:
                 relationships=[],
             )
 
-    @retry(
-        retry=retry_if_exception_type((LLMExtractionError, LLMResponseParsingError)),
-        stop=stop_after_attempt(3),  # 1 initial + 2 retries
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-        reraise=True,
-    )
     async def _process_chunk_with_retry(
         self,
         chunk: ChunkNode,
@@ -147,6 +135,25 @@ class GraphExtractor:
             LLMExtractionError: If the LLM call itself fails.
             LLMResponseParsingError: If the response cannot be parsed.
         """
+        # Manual retry loop with exponential backoff using configured max_retries
+        from tenacity import wait_exponential
+
+        wait = wait_exponential(multiplier=1, min=1, max=10)
+        last_exception: Exception | None = None
+        retry_state = {"attempt": 0}
+
+        for attempt in range(1, self._max_retries + 1):
+            try:
+                retry_state["attempt"] = attempt
+                return await self._extract_single_chunk(chunk, domain_context)
+            except (LLMExtractionError, LLMResponseParsingError) as e:
+                last_exception = e
+                if attempt < self._max_retries:
+                    await asyncio.sleep(wait(retry_state))
+
+        # All attempts failed
+        if last_exception:
+            raise last_exception
         return await self._extract_single_chunk(chunk, domain_context)
 
     async def _extract_single_chunk(

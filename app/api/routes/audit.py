@@ -6,7 +6,6 @@ Provides endpoints for:
 """
 import logging
 from datetime import datetime
-from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, status
 
@@ -21,9 +20,9 @@ router = APIRouter(prefix="/audit", tags=["Audit Logging"])
 @router.get("/logs", summary="List audit logs")
 async def list_audit_logs(
     store: GraphStoreDep,
-    user_id: Optional[str] = Query(default=None, description="Filter by user ID"),
-    action: Optional[str] = Query(default=None, description="Filter by action type"),
-    resource_type: Optional[str] = Query(default=None, description="Filter by resource type"),
+    user_id: str | None = Query(default=None, description="Filter by user ID"),
+    action: str | None = Query(default=None, description="Filter by action type"),
+    resource_type: str | None = Query(default=None, description="Filter by resource type"),
     limit: int = Query(default=100, ge=1, le=1000),
 ) -> list[dict]:
     """List audit logs with optional filters."""

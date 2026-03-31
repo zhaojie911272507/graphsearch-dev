@@ -1,6 +1,26 @@
-import axios, { type AxiosRequestConfig } from 'axios'
+import axios, { type AxiosRequestConfig, type AxiosError } from 'axios'
 
 const API_BASE = '/api/v1'
+
+// Retry configuration
+const MAX_RETRIES = 3
+const RETRY_DELAY = 1000 // 1 second
+
+// Helper function to delay execution
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+
+// Helper function to check if error should be retried
+const shouldRetry = (error: AxiosError): boolean => {
+  const status = error.response?.status
+  // Retry on 5xx server errors, 408 timeout, and 429 rate limit
+  return (
+    status === 408 ||
+    status === 429 ||
+    (status !== undefined && status >= 500 && status < 600) ||
+    error.code === 'ECONNABORTED' ||
+    error.code === 'NETWORK_ERROR'
+  )
+}
 
 export const api = axios.create({
   baseURL: API_BASE,
@@ -8,6 +28,93 @@ export const api = axios.create({
     'Content-Type': 'application/json',
   },
 })
+
+// Request interceptor for logging
+api.interceptors.request.use(
+  (config) => {
+    console.log(`[API] ${config.method?.toUpperCase()} ${config.url}`)
+    return config
+  },
+  (error) => {
+    console.error('[API] Request error:', error)
+    return Promise.reject(error)
+  }
+)
+
+// Response interceptor with retry logic and error handling
+api.interceptors.response.use(
+  (response) => {
+    return response
+  },
+  async (error: AxiosError) => {
+    const config = error.config as AxiosRequestConfig & {
+      _retryCount?: number
+    }
+
+    // Check if we should retry
+    if (shouldRetry(error)) {
+      config._retryCount = config._retryCount || 0
+
+      if (config._retryCount < MAX_RETRIES) {
+        config._retryCount++
+        const retryDelay = RETRY_DELAY * Math.pow(2, config._retryCount - 1) // Exponential backoff
+        console.log(`[API] Retry ${config._retryCount}/${MAX_RETRIES} after ${retryDelay}ms`)
+        await delay(retryDelay)
+        return api(config)
+      }
+    }
+
+    // Handle specific error codes
+    let errorMessage = '请求失败，请稍后重试'
+
+    if (error.response) {
+      const status = error.response.status
+      const data = error.response.data as { detail?: string } | undefined
+
+      switch (status) {
+        case 400:
+          errorMessage = data?.detail || '请求参数错误'
+          break
+        case 401:
+          errorMessage = '未授权，请登录'
+          break
+        case 403:
+          errorMessage = '拒绝访问'
+          break
+        case 404:
+          errorMessage = '请求的资源不存在'
+          break
+        case 408:
+          errorMessage = '请求超时'
+          break
+        case 429:
+          errorMessage = '请求过于频繁，请稍后重试'
+          break
+        case 500:
+          errorMessage = '服务器内部错误'
+          break
+        case 502:
+          errorMessage = '网关错误'
+          break
+        case 503:
+          errorMessage = '服务不可用'
+          break
+        case 504:
+          errorMessage = '网关超时'
+          break
+        default:
+          errorMessage = `请求失败 (${status})`
+      }
+    } else if (error.request) {
+      errorMessage = '无法连接到服务器，请检查网络连接'
+    }
+
+    console.error('[API] Error:', errorMessage, error)
+
+    // Reject with custom error
+    return Promise.reject(new Error(errorMessage))
+  }
+)
 
 // Asset APIs
 export const assetApi = {
