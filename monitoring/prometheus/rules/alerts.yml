@@ -1,0 +1,57 @@
+groups:
+  - name: graphrag_infrastructure
+    interval: 30s
+    rules:
+      - alert: ServiceDown
+        expr: up{job="graphrag-api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Graph RAG API 服务不可用"
+          description: "服务 {{ $labels.instance }} 已宕机超过 1 分钟"
+
+      - alert: HighErrorRate
+        expr: |
+          sum(rate(http_requests_total{job="graphrag-api",status=~"5.."}[5m]))
+          / sum(rate(http_requests_total{job="graphrag-api"}[5m])) > 0.05
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "高错误率"
+          description: "5xx 错误率超过 5% (当前值：{{ $value | humanizePercentage }})"
+
+      - alert: HighLatency
+        expr: |
+          histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job="graphrag-api"}[5m])) by (le)) > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "P95 延迟过高"
+          description: "P95 延迟超过 2 秒 (当前值：{{ $value }}s)"
+
+  - name: graphrag_business
+    interval: 30s
+    rules:
+      - alert: HighExtractionFailureRate
+        expr: |
+          rate(rag_extraction_failure_total[5m])
+          / (rate(rag_extraction_success_total[5m]) + rate(rag_extraction_failure_total[5m])) > 0.2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "提取失败率超过 20%"
+          description: "LLM 提取失败率持续超过 20% (当前值：{{ $value | humanizePercentage }})"
+
+      - alert: HighRetrievalLatency
+        expr: |
+          histogram_quantile(0.90, sum(rate(rag_retrieval_latency_seconds_bucket[5m])) by (le)) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "检索 P90 延迟过高"
+          description: "检索 P90 延迟超过 1 秒 (当前值：{{ $value }}s)"
