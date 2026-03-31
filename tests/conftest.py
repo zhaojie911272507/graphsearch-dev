@@ -142,12 +142,273 @@ def mock_graph_store() -> AsyncMock:
     store.vector_search = AsyncMock(return_value=[])
     store.traverse_from_chunks = AsyncMock(return_value=[])
     store.ensure_indexes = AsyncMock()
+
+    # Entity types
+    store.get_entity_types = AsyncMock(return_value=[
+        {
+            "name": "PERSON",
+            "description": "A person",
+            "color": "#58a6ff",
+            "icon": "user",
+            "is_builtin": True,
+            "created_at": "2026-03-26T00:00:00Z",
+            "updated_at": "2026-03-26T00:00:00Z",
+        },
+        {
+            "name": "CUSTOM_ENTITY",
+            "description": "A custom entity",
+            "color": "#7ee787",
+            "icon": "tag",
+            "is_builtin": False,
+            "created_at": "2026-03-26T00:00:00Z",
+            "updated_at": "2026-03-26T00:00:00Z",
+            "extraction_prompt_template": "Extract custom entities...",
+        },
+    ])
+    store.count_entity_instances = AsyncMock(return_value=10)
+    store.get_entity_type_by_name = AsyncMock(return_value={
+        "name": "CUSTOM_ENTITY",
+        "description": "A custom entity",
+        "color": "#7ee787",
+        "icon": "tag",
+        "is_builtin": False,
+        "created_at": "2026-03-26T00:00:00Z",
+        "updated_at": "2026-03-26T00:00:00Z",
+        "extraction_prompt_template": "Extract custom entities...",
+    })
+    store.create_entity_type = AsyncMock(return_value={
+        "name": "NEW_ENTITY",
+        "description": "A new entity",
+        "color": "#ff7b72",
+        "icon": "plus",
+        "is_builtin": False,
+        "created_at": "2026-03-26T00:00:00Z",
+        "updated_at": "2026-03-26T00:00:00Z",
+        "extraction_prompt_template": "Extract new entities...",
+    })
+    store.update_entity_type = AsyncMock(return_value={
+        "name": "CUSTOM_ENTITY",
+        "description": "Updated description",
+        "color": "#7ee787",
+        "icon": "tag",
+        "is_builtin": False,
+        "created_at": "2026-03-26T00:00:00Z",
+        "updated_at": "2026-03-26T01:00:00Z",
+        "extraction_prompt_template": "Updated template...",
+    })
+    store.delete_entity_type = AsyncMock(return_value=None)
+
+    # Relation types
+    store.get_relation_types = AsyncMock(return_value=[
+        {
+            "name": "RELATED_TO",
+            "description": "Generic relationship",
+            "source_types": ["*"],
+            "target_types": ["*"],
+            "directionality": "DIRECTED",
+            "is_builtin": True,
+            "properties": [],
+            "extraction_prompt": "",
+        },
+        {
+            "name": "OWNS",
+            "description": "Ownership relationship",
+            "source_types": ["PERSON", "ORG"],
+            "target_types": ["ASSET"],
+            "directionality": "DIRECTED",
+            "is_builtin": False,
+            "properties": [{"name": "since", "type": "string"}],
+            "extraction_prompt": "Extract ownership relationships...",
+        },
+    ])
+    store.count_relation_instances = AsyncMock(return_value=5)
+    store.get_relation_type_by_name = AsyncMock(return_value={
+        "name": "OWNS",
+        "description": "Ownership relationship",
+        "source_types": ["PERSON", "ORG"],
+        "target_types": ["ASSET"],
+        "directionality": "DIRECTED",
+        "is_builtin": False,
+        "properties": [{"name": "since", "type": "string"}],
+        "extraction_prompt": "Extract ownership relationships...",
+    })
+    store.create_relation_type = AsyncMock(return_value={
+        "name": "USES",
+        "description": "Usage relationship",
+        "source_types": ["PERSON"],
+        "target_types": ["TECHNOLOGY"],
+        "directionality": "DIRECTED",
+        "is_builtin": False,
+        "properties": [{"name": "duration", "type": "string"}],
+        "extraction_prompt": "Extract usage relationships...",
+    })
+    store.update_relation_type = AsyncMock(return_value={
+        "name": "OWNS",
+        "description": "Updated ownership",
+        "source_types": ["PERSON", "ORG"],
+        "target_types": ["ASSET"],
+        "directionality": "DIRECTED",
+        "is_builtin": False,
+        "properties": [{"name": "since", "type": "string"}, {"name": "percentage", "type": "number"}],
+        "extraction_prompt": "Updated extraction prompt...",
+    })
+    store.delete_relation_type = AsyncMock(return_value=None)
+
+    # Ontology versions
+    store.get_ontology_versions = AsyncMock(return_value=[
+        {
+            "version": "v2.0.0",
+            "created_at": "2026-03-26T01:00:00Z",
+            "created_by": "user-1",
+            "change_summary": "Added new entity types",
+            "changes": [],
+            "is_active": True,
+        },
+        {
+            "version": "v1.0.0",
+            "created_at": "2026-03-26T00:00:00Z",
+            "created_by": "system",
+            "change_summary": "Initial version",
+            "changes": [],
+            "is_active": False,
+        },
+    ])
+    store.get_ontology_version = AsyncMock(return_value={
+        "version": "v2.0.0",
+        "created_at": "2026-03-26T01:00:00Z",
+        "created_by": "user-1",
+        "change_summary": "Added new entity types",
+        "changes": [],
+        "is_active": True,
+    })
+    store.create_ontology_version = AsyncMock(return_value={
+        "version": "v3.0.0",
+        "created_at": "2026-03-26T02:00:00Z",
+        "created_by": "user-2",
+        "change_summary": "Major update",
+        "changes": [],
+        "is_active": False,
+    })
+    store.get_ontology_version_diff = AsyncMock(return_value={
+        "added_entity_types": ["NewType1", "NewType2"],
+        "removed_entity_types": ["OldType"],
+        "modified_entity_types": [{"name": "ModifiedType", "change": "description updated"}],
+        "added_relation_types": ["NewRelation"],
+        "removed_relation_types": ["OldRelation"],
+        "modified_relation_types": [{"name": "ModifiedRelation", "change": "properties updated"}],
+    })
+    store.rollback_ontology_to_version = AsyncMock(return_value=True)
+
+    # Evaluation metrics
+    store.get_evaluation_metrics = AsyncMock(return_value={
+        "context_relevance": 0.85,
+        "faithfulness": 0.90,
+        "answer_relevance": 0.88,
+        "completeness": 0.82,
+    })
+    store.get_ablation_study = AsyncMock(return_value={
+        "full_model": {"context_relevance": 0.85, "faithfulness": 0.90},
+        "without_graph": {"context_relevance": 0.75, "faithfulness": 0.80},
+        "without_vectors": {"context_relevance": 0.70, "faithfulness": 0.75},
+    })
+    store.get_query_evaluations = AsyncMock(return_value=[
+        {
+            "id": "12345678-1234-5678-1234-567812345678",
+            "query": "Test query",
+            "context_relevance": 0.85,
+            "faithfulness": 0.90,
+            "answer_relevance": 0.88,
+            "completeness": 0.82,
+            "created_at": "2026-03-26T00:00:00Z",
+        },
+    ])
+
+    # Pipeline configs
+    store.get_pipeline_configs = AsyncMock(return_value=[
+        {
+            "id": "12345678-1234-5678-1234-567812345678",
+            "name": "Default Pipeline",
+            "description": "Default evaluation pipeline",
+            "is_active": True,
+            "created_by": "system",
+            "created_at": "2026-03-26T00:00:00Z",
+            "config": {"chunk_size": 512, "top_k": 10},
+        },
+    ])
+    store.create_pipeline_config = AsyncMock(return_value={
+        "id": "12345678-1234-5678-1234-567812345679",
+        "name": "New Pipeline",
+        "description": "New evaluation pipeline",
+        "is_active": False,
+        "created_by": "user-1",
+        "created_at": "2026-03-26T00:00:00Z",
+        "config": {"chunk_size": 512, "top_k": 10},
+    })
+    store.activate_pipeline_config = AsyncMock(return_value=True)
+
+    # Prompt templates
+    store.get_prompt_templates = AsyncMock(return_value=[
+        {
+            "id": "12345678-1234-5678-1234-567812345678",
+            "name": "Extraction Prompt",
+            "template_type": "EXTRACTION",
+            "content": "Extract entities from text...",
+            "variables": [],
+            "version": "1.0.0",
+            "is_active": True,
+            "created_by": "system",
+            "created_at": "2026-03-26T00:00:00Z",
+            "updated_at": "2026-03-26T00:00:00Z",
+        },
+    ])
+    store.create_prompt_template = AsyncMock(return_value={
+        "id": "12345678-1234-5678-1234-567812345679",
+        "name": "New Extraction Prompt",
+        "template_type": "EXTRACTION",
+        "content": "New extraction prompt...",
+        "variables": [],
+        "version": "1.0.0",
+        "is_active": True,
+        "created_by": "user-1",
+        "created_at": "2026-03-26T00:00:00Z",
+        "updated_at": "2026-03-26T00:00:00Z",
+    })
+
+    # Metadata/Asset catalog
+    store.get_metadata_assets = AsyncMock(return_value={
+        "items": [
+            {
+                "id": "asset-1",
+                "name": "Test Asset",
+                "asset_type": "DOCUMENT",
+                "created_at": "2026-03-26T00:00:00Z",
+            },
+        ],
+        "total": 1,
+    })
+
+    # Votes
+    store.get_vote = AsyncMock(return_value=None)
+    store.create_vote = AsyncMock(return_value={
+        "id": "vote-1",
+        "vote_type": "APPROVE",
+        "comment": "Helpful annotation",
+        "created_at": "2026-03-26T00:00:00Z",
+    })
+
     return store
 
 
 @pytest.fixture
 def mock_driver():
     """Mock Neo4j driver."""
+    # Create a mock session that supports async context manager protocol
+    mock_session = AsyncMock()
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=None)
+    mock_session.run = AsyncMock()
+
+    # Create driver with session method that returns the mock session
     driver = AsyncMock()
-    driver.session = AsyncMock()
+    driver.session = MagicMock(return_value=mock_session)
     return driver
