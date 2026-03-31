@@ -12,7 +12,10 @@ from contextlib import asynccontextmanager
 import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, Response
+from prometheus_client import CONTENT_TYPE_LATEST
+
+from app.observability.metrics import MetricsRegistry
 
 from app.api.routes import ingest, query
 from app.api.routes import metadata, ontology, intelligence, evaluation, domains, audit, documents, simulation
@@ -189,6 +192,19 @@ def create_app() -> FastAPI:
             status="ok" if (neo4j_ok and embedding_ok) else "degraded",
             neo4j_connected=neo4j_ok,
             embedding_model_loaded=embedding_ok,
+        )
+
+    # Metrics endpoint
+    @app.get("/metrics", tags=["Observability"])
+    async def metrics():
+        """Prometheus metrics endpoint."""
+        settings = get_settings()
+        if not settings.observability.metrics_enabled:
+            return Response(status_code=503, content="Metrics disabled")
+
+        return Response(
+            content=MetricsRegistry.generate_metrics(),
+            media_type=CONTENT_TYPE_LATEST,
         )
 
     return app

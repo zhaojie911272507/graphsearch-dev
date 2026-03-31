@@ -10,6 +10,8 @@ from pathlib import Path
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.observability.config import ObservabilitySettings
+
 
 class AppEnvironment(StrEnum):
     """Application deployment environments."""
@@ -150,6 +152,7 @@ class Settings(BaseSettings):
     extraction: ExtractionSettings = Field(default_factory=ExtractionSettings)
     retry: RetrySettings = Field(default_factory=RetrySettings)
     simulation: SimulationSettings = Field(default_factory=SimulationSettings)
+    observability: ObservabilitySettings = Field(default_factory=ObservabilitySettings)
 
 
 def get_settings() -> Settings:
