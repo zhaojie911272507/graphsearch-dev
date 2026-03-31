@@ -5,6 +5,8 @@ import { Badge } from '@/components/ui/Badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/Select'
 import { BarChart3, TrendingUp, Users, GitBranch, FileText, Download, RefreshCw } from 'lucide-react'
+import { simulationReportApi } from '@/lib/api'
+import { useToast } from '@/contexts/ToastContext'
 
 interface Report {
   id: string
@@ -14,6 +16,23 @@ interface Report {
   generatedAt: string
   summary: string
   status: 'completed' | 'generating' | 'failed'
+}
+
+interface ReportResponse {
+  report_id: string
+  report_type: string
+  generated_at: string
+  time_range: {
+    start: string
+    end: string
+  }
+  summary: string
+  statistics: {
+    total_agents: number
+    total_interactions: number
+    total_memories: number
+  }
+  recommendations: string[]
 }
 
 const mockReports: Report[] = [
@@ -65,14 +84,44 @@ const reportTypeIcons: Record<Report['type'], React.ElementType> = {
 export function SimulationReports() {
   const [reports] = useState<Report[]>(mockReports)
   const [selectedType, setSelectedType] = useState<string>('all')
+  const [generating, setGenerating] = useState(false)
+  const { toast } = useToast()
 
   const filteredReports = selectedType === 'all'
     ? reports
     : reports.filter(r => r.type === selectedType)
 
-  const handleGenerateReport = () => {
-    // TODO: 调用 API 生成报告
-    console.log('生成报告...')
+  const handleGenerateReport = async () => {
+    setGenerating(true)
+    try {
+      // Use the first session from mockReports as example
+      const selectedSessionId = reports[0]?.sessionId || 'sim-001'
+
+      const response = await simulationReportApi.generateReport({
+        session_id: selectedSessionId,
+        report_type: 'DAILY_SUMMARY',
+        time_range: {
+          start: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
+          end: new Date().toISOString(),
+        },
+      })
+
+      const data: ReportResponse = response.data
+
+      toast({
+        title: '报告生成成功',
+        description: `已生成 ${reportTypeLabels[data.report_type as keyof typeof reportTypeLabels]} 报告`,
+      })
+    } catch (error) {
+      console.error('Failed to generate report:', error)
+      toast({
+        title: '报告生成失败',
+        description: '请稍后重试',
+        variant: 'destructive',
+      })
+    } finally {
+      setGenerating(false)
+    }
   }
 
   return (
@@ -82,9 +131,9 @@ export function SimulationReports() {
           <h1 className="text-3xl font-bold">报告分析</h1>
           <p className="text-muted-foreground mt-1">查看和分析社会模拟生成的报告</p>
         </div>
-        <Button onClick={handleGenerateReport}>
-          <RefreshCw className="h-4 w-4 mr-2" />
-          生成报告
+        <Button onClick={handleGenerateReport} disabled={generating}>
+          <RefreshCw className={`h-4 w-4 mr-2 ${generating ? 'animate-spin' : ''}`} />
+          {generating ? '生成中...' : '生成报告'}
         </Button>
       </div>
 

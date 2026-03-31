@@ -123,7 +123,6 @@ export function Sidebar({ className }: SidebarProps) {
           </div>
           <div>
             <h1 className="text-lg font-bold text-foreground">GraphRAG</h1>
-            <p className="text-xs text-muted-foreground">社会模拟系统</p>
           </div>
         </div>
       </div>

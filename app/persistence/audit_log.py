@@ -5,7 +5,6 @@ Tracks system changes and user actions for compliance and debugging.
 
 import logging
 from datetime import datetime, timezone
-from typing import Optional
 
 from app.domain.audit import AuditEvent, AuditAction
 from app.config import Settings
@@ -27,8 +26,8 @@ class AuditLogger:
         user_id: str,
         resource_type: str,
         resource_id: str,
-        changes: Optional[dict] = None,
-        ip_address: Optional[str] = None,
+        changes: dict | None = None,
+        ip_address: str | None = None,
     ) -> AuditEvent:
         """Log an audit event to Neo4j.
 
@@ -99,10 +98,10 @@ class AuditLogger:
 
     async def get_audit_logs(
         self,
-        user_id: Optional[str] = None,
-        action: Optional[AuditAction] = None,
-        resource_type: Optional[str] = None,
-        resource_id: Optional[str] = None,
+        user_id: str | None = None,
+        action: AuditAction | None = None,
+        resource_type: str | None = None,
+        resource_id: str | None = None,
         limit: int = 100,
     ) -> list[AuditEvent]:
         """Query audit logs.

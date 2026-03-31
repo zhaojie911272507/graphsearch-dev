@@ -64,32 +64,3 @@ async def get_graph_retriever(
 
 
 GraphRetrieverDep = Annotated[GraphRetriever, Depends(get_graph_retriever)]
-
-
-async def get_embedding_service(request: Request) -> EmbeddingService:
-    """Provide the shared EmbeddingService singleton from app state."""
-    service: EmbeddingService = request.app.state.embedding_service
-    return service
-
-
-EmbeddingServiceDep = Annotated[EmbeddingService, Depends(get_embedding_service)]
-
-
-async def get_graph_extractor(request: Request) -> GraphExtractor:
-    """Provide the GraphExtractor (created during lifespan)."""
-    extractor: GraphExtractor = request.app.state.graph_extractor
-    return extractor
-
-
-GraphExtractorDep = Annotated[GraphExtractor, Depends(get_graph_extractor)]
-
-
-async def get_graph_retriever(
-    store: GraphStoreDep,
-    embedder: EmbeddingServiceDep,
-) -> GraphRetriever:
-    """Compose a GraphRetriever from its dependencies."""
-    return GraphRetriever(graph_store=store, embedding_service=embedder)
-
-
-GraphRetrieverDep = Annotated[GraphRetriever, Depends(get_graph_retriever)]

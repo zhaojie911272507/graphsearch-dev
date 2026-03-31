@@ -17,8 +17,9 @@ from app.main import app
 
 
 @pytest.fixture
-def client():
-    """Create FastAPI test client."""
+def client(mock_graph_store):
+    """Create FastAPI test client with mocked graph store."""
+    app.state.graph_store = mock_graph_store
     return TestClient(app)
 
 
@@ -156,51 +157,48 @@ class TestAssetCatalog:
 
     def test_list_assets_default(self, client, mock_graph_store):
         """Test listing assets with default parameters."""
-        with patch("app.api.routes.metadata.GraphStore", return_value=mock_graph_store):
-            response = client.get("/api/v1/metadata/assets")
+        response = client.get("/api/v1/metadata/assets")
 
-            assert response.status_code == 200
-            data = response.json()
-            assert "items" in data
-            assert "total" in data
-            assert "page" in data
-            assert data["page"] == 1
-            assert data["page_size"] == 20
-            assert len(data["items"]) > 0
+        assert response.status_code == 200
+        data = response.json()
+        assert "items" in data
+        assert "total" in data
+        assert "page" in data
+        assert data["page"] == 1
+        assert data["page_size"] == 20
+        assert len(data["items"]) > 0
 
     def test_list_assets_with_filters(self, client, mock_graph_store):
         """Test listing assets with filters."""
-        with patch("app.api.routes.metadata.GraphStore", return_value=mock_graph_store):
-            response = client.get(
-                "/api/v1/metadata/assets"
-                "?type=Entity&entity_type=TECHNOLOGY&q=neo4j&tags=database,graph"
-                "&page=1&page_size=10&sort_by=name&order=asc"
-            )
+        response = client.get(
+            "/api/v1/metadata/assets"
+            "?type=Entity&entity_type=TECHNOLOGY&q=neo4j&tags=database,graph"
+            "&page=1&page_size=10&sort_by=name&order=asc"
+        )
 
-            assert response.status_code == 200
-            mock_graph_store.get_metadata_assets.assert_called_once_with(
-                node_type="Entity",
-                entity_type="TECHNOLOGY",
-                search_query="neo4j",
-                tags=["database", "graph"],
-                sort_by="name",
-                order="asc",
-                limit=10,
-                offset=0,
-            )
+        assert response.status_code == 200
+        mock_graph_store.get_metadata_assets.assert_called_once_with(
+            node_type="Entity",
+            entity_type="TECHNOLOGY",
+            search_query="neo4j",
+            tags=["database", "graph"],
+            sort_by="name",
+            order="asc",
+            limit=10,
+            offset=0,
+        )
 
     def test_list_assets_empty_result(self, client, mock_graph_store):
         """Test listing assets when no results match."""
         mock_graph_store.get_metadata_assets = AsyncMock(return_value=[])
         mock_graph_store.count_metadata_assets = AsyncMock(return_value=0)
 
-        with patch("app.api.routes.metadata.GraphStore", return_value=mock_graph_store):
-            response = client.get("/api/v1/metadata/assets?q=nonexistent")
+        response = client.get("/api/v1/metadata/assets?q=nonexistent")
 
-            assert response.status_code == 200
-            data = response.json()
-            assert data["total"] == 0
-            assert len(data["items"]) == 0
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total"] == 0
+        assert len(data["items"]) == 0
 
 
 class TestNodeDetail:
@@ -210,26 +208,24 @@ class TestNodeDetail:
         """Test getting detailed information about a node."""
         node_id = str(uuid4())
 
-        with patch("app.api.routes.metadata.GraphStore", return_value=mock_graph_store):
-            response = client.get(f"/api/v1/metadata/{node_id}")
+        response = client.get(f"/api/v1/metadata/{node_id}")
 
-            assert response.status_code == 200
-            data = response.json()
-            assert data["node_type"] == "Entity"
-            assert data["name"] == "Neo4j"
-            assert data["entity_type"] == "TECHNOLOGY"
-            assert data["relation_count"] == 1
-            assert len(data["outgoing_relations"]) == 1
-            assert data["quality_score"] > 0
+        assert response.status_code == 200
+        data = response.json()
+        assert data["node_type"] == "Entity"
+        assert data["name"] == "Neo4j"
+        assert data["entity_type"] == "TECHNOLOGY"
+        assert data["relation_count"] == 1
+        assert len(data["outgoing_relations"]) == 1
+        assert data["quality_score"] > 0
 
     def test_get_node_detail_not_found(self, client, mock_graph_store):
         """Test getting detail for non-existent node."""
         mock_graph_store.get_node_by_id = AsyncMock(return_value=None)
 
-        with patch("app.api.routes.metadata.GraphStore", return_value=mock_graph_store):
-            response = client.get(f"/api/v1/metadata/{uuid4()}")
+        response = client.get(f"/api/v1/metadata/{uuid4()}")
 
-            assert response.status_code == 404
+        assert response.status_code == 404
 
 
 class TestLineageTracking:
@@ -239,57 +235,53 @@ class TestLineageTracking:
         """Test getting node lineage with default parameters."""
         node_id = str(uuid4())
 
-        with patch("app.api.routes.metadata.GraphStore", return_value=mock_graph_store):
-            response = client.get(f"/api/v1/metadata/{node_id}/lineage")
+        response = client.get(f"/api/v1/metadata/{node_id}/lineage")
 
-            assert response.status_code == 200
-            data = response.json()
-            assert "lineage_paths" in data
-            assert "upstream_count" in data
-            assert "downstream_count" in data
-            assert len(data["lineage_paths"]) > 0
+        assert response.status_code == 200
+        data = response.json()
+        assert "lineage_paths" in data
+        assert "upstream_count" in data
+        assert "downstream_count" in data
+        assert len(data["lineage_paths"]) > 0
 
     def test_get_node_lineage_upstream_only(self, client, mock_graph_store):
         """Test getting only upstream lineage."""
         node_id = str(uuid4())
 
-        with patch("app.api.routes.metadata.GraphStore", return_value=mock_graph_store):
-            response = client.get(f"/api/v1/metadata/{node_id}/lineage?direction=upstream")
+        response = client.get(f"/api/v1/metadata/{node_id}/lineage?direction=upstream")
 
-            assert response.status_code == 200
-            mock_graph_store.get_node_lineage.assert_called_once_with(
-                node_id,
-                direction="upstream",
-                max_depth=3,
-            )
+        assert response.status_code == 200
+        mock_graph_store.get_node_lineage.assert_called_once_with(
+            node_id,
+            direction="upstream",
+            max_depth=3,
+        )
 
     def test_get_node_lineage_downstream_only(self, client, mock_graph_store):
         """Test getting only downstream lineage."""
         node_id = str(uuid4())
 
-        with patch("app.api.routes.metadata.GraphStore", return_value=mock_graph_store):
-            response = client.get(f"/api/v1/metadata/{node_id}/lineage?direction=downstream")
+        response = client.get(f"/api/v1/metadata/{node_id}/lineage?direction=downstream")
 
-            assert response.status_code == 200
-            mock_graph_store.get_node_lineage.assert_called_once_with(
-                node_id,
-                direction="downstream",
-                max_depth=3,
-            )
+        assert response.status_code == 200
+        mock_graph_store.get_node_lineage.assert_called_once_with(
+            node_id,
+            direction="downstream",
+            max_depth=3,
+        )
 
     def test_get_node_lineage_custom_depth(self, client, mock_graph_store):
         """Test getting lineage with custom max depth."""
         node_id = str(uuid4())
 
-        with patch("app.api.routes.metadata.GraphStore", return_value=mock_graph_store):
-            response = client.get(f"/api/v1/metadata/{node_id}/lineage?max_depth=5")
+        response = client.get(f"/api/v1/metadata/{node_id}/lineage?max_depth=5")
 
-            assert response.status_code == 200
-            mock_graph_store.get_node_lineage.assert_called_once_with(
-                node_id,
-                direction="both",
-                max_depth=5,
-            )
+        assert response.status_code == 200
+        mock_graph_store.get_node_lineage.assert_called_once_with(
+            node_id,
+            direction="both",
+            max_depth=5,
+        )
 
 
 class TestAnnotations:
@@ -299,70 +291,66 @@ class TestAnnotations:
         """Test getting annotations for a node."""
         node_id = str(uuid4())
 
-        with patch("app.api.routes.metadata.GraphStore", return_value=mock_graph_store):
-            response = client.get(f"/api/v1/metadata/{node_id}/annotations")
+        response = client.get(f"/api/v1/metadata/{node_id}/annotations")
 
-            assert response.status_code == 200
-            data = response.json()
-            assert len(data) > 0
-            assert data[0]["annotation_type"] == "comment"
-            assert data[0]["status"] == "approved"
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) > 0
+        assert data[0]["annotation_type"] == "comment"
+        assert data[0]["status"] == "approved"
 
     def test_get_node_annotations_filtered(self, client, mock_graph_store):
         """Test getting annotations with filters."""
         node_id = str(uuid4())
 
-        with patch("app.api.routes.metadata.GraphStore", return_value=mock_graph_store):
-            response = client.get(
-                f"/api/v1/metadata/{node_id}/annotations"
-                "?annotation_type=correction&status=pending"
-            )
+        response = client.get(
+            f"/api/v1/metadata/{node_id}/annotations"
+            "?annotation_type=correction&status=pending"
+        )
 
-            assert response.status_code == 200
-            mock_graph_store.get_node_annotations.assert_called_once_with(
-                node_id,
-                annotation_type="correction",
-                status="pending",
-            )
+        assert response.status_code == 200
+        mock_graph_store.get_node_annotations.assert_called_once_with(
+            node_id,
+            annotation_type="correction",
+            status="pending",
+        )
 
     def test_create_annotation_success(self, client, mock_graph_store):
         """Test creating a new annotation on a node."""
         node_id = str(uuid4())
         annotation_data = {
-            "annotation_type": "correction",
-            "content": {"text": "This should be updated"},
+        "annotation_type": "correction",
+        "content": {"text": "This should be updated"},
         }
 
-        with patch("app.api.routes.metadata.GraphStore", return_value=mock_graph_store):
-            response = client.post(
-                f"/api/v1/metadata/{node_id}/annotations",
-                json=annotation_data,
-            )
+        response = client.post(
+            f"/api/v1/metadata/{node_id}/annotations",
+            json=annotation_data,
+        )
 
-            assert response.status_code == 201
-            data = response.json()
-            assert data["annotation_type"] == "correction"
-            assert data["status"] == "pending"
-            mock_graph_store.create_annotation.assert_called_once()
+        assert response.status_code == 201
+        data = response.json()
+        assert data["annotation_type"] == "correction"
+        assert data["status"] == "pending"
+        mock_graph_store.create_annotation.assert_called_once()
 
     def test_update_annotation_success(self, client, mock_graph_store):
         """Test updating an existing annotation."""
         annotation_id = str(uuid4())
         update_data = {
-            "status": "approved",
-            "content": {"text": "Updated content"},
+        "status": "approved",
+        "content": {"text": "Updated content"},
         }
 
-        with patch("app.api.routes.metadata.GraphStore", return_value=mock_graph_store):
-            response = client.put(
-                f"/api/v1/metadata/annotations/{annotation_id}",
-                json=update_data,
-            )
+        response = client.put(
+            f"/api/v1/metadata/annotations/{annotation_id}",
+            json=update_data,
+        )
 
-            assert response.status_code == 200
-            data = response.json()
-            assert data["status"] == "approved"
-            mock_graph_store.update_annotation.assert_called_once()
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "approved"
+        mock_graph_store.update_annotation.assert_called_once()
 
 
 class TestVotes:
@@ -372,21 +360,20 @@ class TestVotes:
         """Test casting a vote on an annotation."""
         annotation_id = str(uuid4())
         vote_data = {
-            "vote_type": "upvote",
-            "comment": "Helpful annotation",
+        "vote_type": "upvote",
+        "comment": "Helpful annotation",
         }
 
-        with patch("app.api.routes.metadata.GraphStore", return_value=mock_graph_store):
-            response = client.post(
-                f"/api/v1/metadata/annotations/{annotation_id}/votes",
-                json=vote_data,
-            )
+        response = client.post(
+            f"/api/v1/metadata/annotations/{annotation_id}/votes",
+            json=vote_data,
+        )
 
-            assert response.status_code == 201
-            data = response.json()
-            assert data["vote_type"] == "upvote"
-            assert data["comment"] == "Helpful annotation"
-            mock_graph_store.create_vote.assert_called_once()
+        assert response.status_code == 201
+        data = response.json()
+        assert data["vote_type"] == "upvote"
+        assert data["comment"] == "Helpful annotation"
+        mock_graph_store.create_vote.assert_called_once()
 
 
 class TestTags:
@@ -396,11 +383,10 @@ class TestTags:
         """Test getting tags for a node."""
         node_id = str(uuid4())
 
-        with patch("app.api.routes.metadata.GraphStore", return_value=mock_graph_store):
-            response = client.get(f"/api/v1/metadata/{node_id}/tags")
+        response = client.get(f"/api/v1/metadata/{node_id}/tags")
 
-            assert response.status_code == 200
-            data = response.json()
-            assert len(data) == 2
-            assert data[0]["name"] == "database"
-            assert data[1]["name"] == "graph"
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 2
+        assert data[0]["name"] == "database"
+        assert data[1]["name"] == "graph"

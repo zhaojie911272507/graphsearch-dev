@@ -10,7 +10,6 @@ Provides endpoints for:
 
 import logging
 from pathlib import Path
-from typing import Optional
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import JSONResponse
@@ -41,8 +40,8 @@ class UploadResponse(BaseModel):
     file_type: str
     status: str
     message: str
-    chunk_count: Optional[int] = None
-    entity_count: Optional[int] = None
+    chunk_count: int | None = None
+    entity_count: int | None = None
 
 
 class DocumentListResponse(BaseModel):
@@ -74,8 +73,8 @@ class BatchUploadResponse(BaseModel):
 )
 async def upload_document(
     file: UploadFile = File(..., description="Document file to upload"),
-    domain_key: Optional[str] = Form(None, description="Domain context for extraction"),
-    use_dedup: Optional[bool] = Form(False, description="Enable entity deduplication by name"),
+    domain_key: str | None = Form(None, description="Domain context for extraction"),
+    use_dedup: bool | None = Form(False, description="Enable entity deduplication by name"),
     store: GraphStoreDep = None,
     embedder: EmbeddingServiceDep = None,
     extractor: GraphExtractorDep = None,
@@ -270,7 +269,7 @@ async def upload_document(
 )
 async def batch_upload_documents(
     files: list[UploadFile] = File(..., description="Document files to upload"),
-    domain_key: Optional[str] = Form(None, description="Domain context for extraction"),
+    domain_key: str | None = Form(None, description="Domain context for extraction"),
     store: GraphStoreDep = None,
     embedder: EmbeddingServiceDep = None,
     extractor: GraphExtractorDep = None,
@@ -337,10 +336,10 @@ async def batch_upload_documents(
 )
 async def list_documents(
     store: GraphStoreDep,
-    q: Optional[str] = None,
+    q: str | None = None,
     page: int = 1,
     page_size: int = 20,
-    status_filter: Optional[str] = None,
+    status_filter: str | None = None,
 ) -> DocumentListResponse:
     """List documents from the knowledge graph."""
     try:

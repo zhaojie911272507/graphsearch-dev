@@ -143,3 +143,11 @@ def mock_graph_store() -> AsyncMock:
     store.traverse_from_chunks = AsyncMock(return_value=[])
     store.ensure_indexes = AsyncMock()
     return store
+
+
+@pytest.fixture
+def mock_driver():
+    """Mock Neo4j driver."""
+    driver = AsyncMock()
+    driver.session = AsyncMock()
+    return driver
