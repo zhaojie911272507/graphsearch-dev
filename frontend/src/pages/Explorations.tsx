@@ -21,6 +21,7 @@ import {
 } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
 import { zhCN } from 'date-fns/locale'
+import { useToast } from '@/contexts/ToastContext'
 
 export function Explorations() {
   const [isCreating, setIsCreating] = useState(false)
@@ -54,15 +55,24 @@ export function Explorations() {
   }
 
   const handleShare = async (id: string) => {
+    const { toast } = useToast()
     try {
       const response = await fetch(`/api/v1/intelligence/explorations/${id}/share`, {
         method: 'POST',
       })
       const data = await response.json()
       await navigator.clipboard.writeText(`${window.location.origin}${data.share_url}`)
-      alert('分享链接已复制到剪贴板')
+      toast({
+        title: '分享成功',
+        description: '分享链接已复制到剪贴板',
+      })
     } catch (error) {
       console.error('Failed to share:', error)
+      toast({
+        title: '分享失败',
+        description: '请稍后重试',
+        variant: 'destructive',
+      })
     }
   }
 
