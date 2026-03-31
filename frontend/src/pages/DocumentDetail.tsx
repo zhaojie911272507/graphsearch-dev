@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { FileText, Clock, CheckCircle, XCircle, ArrowLeft, RefreshCw, Trash2 } from 'lucide-react'
 import { Link } from 'react-router-dom'
+import { useToast } from '@/contexts/ToastContext'
 
 interface DocumentDetailData {
   id: string
@@ -27,6 +28,7 @@ export function DocumentDetail() {
   const [document, setDocument] = useState<DocumentDetailData | null>(null)
   const [loading, setLoading] = useState(true)
   const [deleting, setDeleting] = useState(false)
+  const { toast } = useToast()
 
   useEffect(() => {
     if (!documentId) return
@@ -38,7 +40,11 @@ export function DocumentDetail() {
         setDocument(response.data)
       } catch (error) {
         console.error('Failed to fetch document:', error)
-        alert('Failed to load document details')
+        toast({
+          title: '加载失败',
+          description: '无法加载文档详情，请稍后重试',
+          variant: 'destructive',
+        })
       } finally {
         setLoading(false)
       }
@@ -57,7 +63,11 @@ export function DocumentDetail() {
         })
         .catch(err => {
           console.error('Refresh failed:', err)
-          alert('Refresh failed')
+          toast({
+            title: '刷新失败',
+            description: '无法刷新文档详情',
+            variant: 'destructive',
+          })
           setLoading(false)
         })
     }
@@ -73,11 +83,18 @@ export function DocumentDetail() {
     try {
       setDeleting(true)
       await documentApi.delete(documentId)
-      alert('文档已删除')
+      toast({
+        title: '删除成功',
+        description: '文档已从系统中删除',
+      })
       window.history.back()
     } catch (error) {
       console.error('Delete failed:', error)
-      alert('删除文档失败')
+      toast({
+        title: '删除失败',
+        description: '请稍后重试',
+        variant: 'destructive',
+      })
     } finally {
       setDeleting(false)
     }
