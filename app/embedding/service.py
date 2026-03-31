@@ -7,6 +7,7 @@ once during application startup and shared across all async request handlers.
 import asyncio
 import logging
 import threading
+import time
 from functools import lru_cache
 from pathlib import Path
 
@@ -15,6 +16,8 @@ from sentence_transformers import SentenceTransformer
 
 from app.config import EmbeddingSettings
 from app.exceptions import EmbeddingDimensionMismatchError, EmbeddingModelLoadError
+from app.observability.metrics import MetricsRegistry
+from app.observability.tracing import TracingSetup
 
 logger = logging.getLogger(__name__)
 
@@ -159,8 +162,32 @@ class EmbeddingService:
         Returns:
             Embedding vector of length `self.dimension`.
         """
-        results = await self.embed_documents([text])
-        return results[0]
+        start = time.monotonic()
+        tracer = TracingSetup.get_tracer()
+
+        with tracer.start_as_current_span("rag.embedding") as span:
+            span.set_attribute("embedding.model", self._settings.model_path)
+            span.set_attribute("embedding.device", self._settings.device)
+
+            try:
+                results = await self.embed_documents([text])
+                result = results[0]
+
+                duration = time.monotonic() - start
+                MetricsRegistry.rag_embedding_latency_seconds.labels(
+                    model=self._settings.model_path,
+                    device=self._settings.device,
+                ).observe(duration)
+
+                span.set_attribute("embedding.duration_seconds", duration)
+                span.set_attribute("embedding.dimension", len(result))
+
+                return result
+
+            except Exception as e:
+                span.set_attribute("error", True)
+                span.record_exception(e)
+                raise
 
     @classmethod
     def reset(cls) -> None:
