@@ -5,6 +5,7 @@ persistence with MERGE-based idempotency and vector index management.
 """
 
 import logging
+import time
 from datetime import datetime
 from types import TracebackType
 from typing import Self
@@ -16,6 +17,8 @@ from app.domain.enums import NodeType, RelationType
 from app.domain.nodes import GraphNode, EntityNode, ConceptNode
 from app.domain.relationships import GraphRelationship
 from app.exceptions import Neo4jConnectionError, Neo4jQueryError, Neo4jTransactionError
+from app.observability.metrics import MetricsRegistry
+from app.observability.tracing import TracingSetup
 from app.utils.retry import with_retry
 
 logger = logging.getLogger(__name__)
@@ -368,21 +371,37 @@ class GraphStore:
         Args:
             dimension: Embedding vector dimension (default 1024 for M3E-Large).
         """
-        async with self.driver.session(database=self._settings.database) as session:
+        start = time.monotonic()
+        tracer = TracingSetup.get_tracer()
+
+        with tracer.start_as_current_span("neo4j.ensure_indexes") as span:
+            span.set_attribute("neo4j.operation", "ensure_indexes")
+            span.set_attribute("neo4j.dimension", dimension)
+
             try:
-                # Uniqueness constraints on node IDs
-                for label in NodeType:
-                    await session.run(
-                        f"CREATE CONSTRAINT IF NOT EXISTS FOR (n:{label.value}) "
-                        f"REQUIRE n.id IS UNIQUE"
+                async with self.driver.session(database=self._settings.database) as session:
+                    # Uniqueness constraints on node IDs
+                    for label in NodeType:
+                        await session.run(
+                            f"CREATE CONSTRAINT IF NOT EXISTS FOR (n:{label.value}) "
+                            f"REQUIRE n.id IS UNIQUE"
+                        )
+                    # Vector index for Chunk embeddings
+                    await session.run(_CREATE_VECTOR_INDEX, dimension=dimension)
+
+                    duration = time.monotonic() - start
+                    MetricsRegistry.rag_neo4j_query_latency_seconds.labels(
+                        operation="ensure_indexes",
+                    ).observe(duration)
+                    span.set_attribute("neo4j.duration_seconds", duration)
+
+                    logger.info(
+                        "Indexes and constraints ensured",
+                        extra={"dimension": dimension},
                     )
-                # Vector index for Chunk embeddings
-                await session.run(_CREATE_VECTOR_INDEX, dimension=dimension)
-                logger.info(
-                    "Indexes and constraints ensured",
-                    extra={"dimension": dimension},
-                )
             except Exception as exc:
+                span.set_attribute("error", True)
+                span.record_exception(exc)
                 raise Neo4jQueryError(
                     f"Failed to create indexes: {exc}",
                     details={"dimension": dimension},
@@ -475,34 +494,53 @@ class GraphStore:
         if not nodes:
             return 0
 
-        # Group by node type
-        grouped: dict[NodeType, list[dict[str, object]]] = {}
-        for node in nodes:
-            props = node.neo4j_properties()
-            grouped.setdefault(node.node_type, []).append(props)
+        start = time.monotonic()
+        tracer = TracingSetup.get_tracer()
 
-        total = 0
-        async with self.driver.session(database=self._settings.database) as session:
-            for node_type, batch in grouped.items():
-                cypher = _NODE_MERGE_MAP.get(node_type)
-                if cypher is None:
-                    logger.warning("No MERGE template for node type: %s", node_type)
-                    continue
-                try:
-                    await session.execute_write(
-                        self._run_batch_write, cypher, batch
-                    )
-                    total += len(batch)
-                    logger.debug(
-                        "Upserted %d %s nodes", len(batch), node_type.value
-                    )
-                except Exception as exc:
-                    raise Neo4jTransactionError(
-                        f"Failed to upsert {node_type.value} nodes: {exc}",
-                        details={"node_type": node_type.value, "batch_size": len(batch)},
-                    ) from exc
+        with tracer.start_as_current_span("neo4j.upsert_nodes") as span:
+            span.set_attribute("neo4j.operation", "upsert_nodes")
+            span.set_attribute("neo4j.node_count", len(nodes))
 
-        return total
+            # Group by node type
+            grouped: dict[NodeType, list[dict[str, object]]] = {}
+            for node in nodes:
+                props = node.neo4j_properties()
+                grouped.setdefault(node.node_type, []).append(props)
+
+            total = 0
+            try:
+                async with self.driver.session(database=self._settings.database) as session:
+                    for node_type, batch in grouped.items():
+                        cypher = _NODE_MERGE_MAP.get(node_type)
+                        if cypher is None:
+                            logger.warning("No MERGE template for node type: %s", node_type)
+                            continue
+                        try:
+                            await session.execute_write(
+                                self._run_batch_write, cypher, batch
+                            )
+                            total += len(batch)
+                            logger.debug(
+                                "Upserted %d %s nodes", len(batch), node_type.value
+                            )
+                        except Exception as exc:
+                            raise Neo4jTransactionError(
+                                f"Failed to upsert {node_type.value} nodes: {exc}",
+                                details={"node_type": node_type.value, "batch_size": len(batch)},
+                            ) from exc
+
+                    duration = time.monotonic() - start
+                    MetricsRegistry.rag_neo4j_query_latency_seconds.labels(
+                        operation="upsert_nodes",
+                    ).observe(duration)
+                    span.set_attribute("neo4j.duration_seconds", duration)
+
+                    return total
+
+            except Exception as exc:
+                span.set_attribute("error", True)
+                span.record_exception(exc)
+                raise
 
     async def upsert_entities_with_dedup(
         self,
@@ -615,33 +653,52 @@ class GraphStore:
         if not relationships:
             return 0
 
-        grouped: dict[RelationType, list[dict[str, object]]] = {}
-        for rel in relationships:
-            props = rel.neo4j_properties()
-            grouped.setdefault(rel.relation_type, []).append(props)
+        start = time.monotonic()
+        tracer = TracingSetup.get_tracer()
 
-        total = 0
-        async with self.driver.session(database=self._settings.database) as session:
-            for rel_type, batch in grouped.items():
-                cypher = _MERGE_RELATIONSHIP_TYPED.get(rel_type)
-                if cypher is None:
-                    logger.warning("No MERGE template for relation type: %s", rel_type)
-                    continue
-                try:
-                    await session.execute_write(
-                        self._run_batch_write, cypher, batch
-                    )
-                    total += len(batch)
-                    logger.debug(
-                        "Upserted %d %s relationships", len(batch), rel_type.value
-                    )
-                except Exception as exc:
-                    raise Neo4jTransactionError(
-                        f"Failed to upsert {rel_type.value} relationships: {exc}",
-                        details={"rel_type": rel_type.value, "batch_size": len(batch)},
-                    ) from exc
+        with tracer.start_as_current_span("neo4j.upsert_relationships") as span:
+            span.set_attribute("neo4j.operation", "upsert_relationships")
+            span.set_attribute("neo4j.relationship_count", len(relationships))
 
-        return total
+            grouped: dict[RelationType, list[dict[str, object]]] = {}
+            for rel in relationships:
+                props = rel.neo4j_properties()
+                grouped.setdefault(rel.relation_type, []).append(props)
+
+            total = 0
+            try:
+                async with self.driver.session(database=self._settings.database) as session:
+                    for rel_type, batch in grouped.items():
+                        cypher = _MERGE_RELATIONSHIP_TYPED.get(rel_type)
+                        if cypher is None:
+                            logger.warning("No MERGE template for relation type: %s", rel_type)
+                            continue
+                        try:
+                            await session.execute_write(
+                                self._run_batch_write, cypher, batch
+                            )
+                            total += len(batch)
+                            logger.debug(
+                                "Upserted %d %s relationships", len(batch), rel_type.value
+                            )
+                        except Exception as exc:
+                            raise Neo4jTransactionError(
+                                f"Failed to upsert {rel_type.value} relationships: {exc}",
+                                details={"rel_type": rel_type.value, "batch_size": len(batch)},
+                            ) from exc
+
+                    duration = time.monotonic() - start
+                    MetricsRegistry.rag_neo4j_query_latency_seconds.labels(
+                        operation="upsert_relationships",
+                    ).observe(duration)
+                    span.set_attribute("neo4j.duration_seconds", duration)
+
+                    return total
+
+            except Exception as exc:
+                span.set_attribute("error", True)
+                span.record_exception(exc)
+                raise
 
     # ──────────────────────────────────────────
     # Vector Search
@@ -662,16 +719,33 @@ class GraphStore:
         Returns:
             List of dicts with 'node' properties and 'score'.
         """
-        async with self.driver.session(database=self._settings.database) as session:
+        start = time.monotonic()
+        tracer = TracingSetup.get_tracer()
+
+        with tracer.start_as_current_span("neo4j.vector_search") as span:
+            span.set_attribute("neo4j.operation", "vector_search")
+            span.set_attribute("neo4j.top_k", top_k)
+
             try:
-                result = await session.run(
-                    _VECTOR_SEARCH,
-                    query_vector=query_vector,
-                    top_k=top_k,
-                )
-                records = [record.data() async for record in result]
-                return records
+                async with self.driver.session(database=self._settings.database) as session:
+                    result = await session.run(
+                        _VECTOR_SEARCH,
+                        query_vector=query_vector,
+                        top_k=top_k,
+                    )
+                    records = [record.data() async for record in result]
+
+                    duration = time.monotonic() - start
+                    MetricsRegistry.rag_neo4j_query_latency_seconds.labels(
+                        operation="vector_search",
+                    ).observe(duration)
+                    span.set_attribute("neo4j.duration_seconds", duration)
+
+                    return records
+
             except Exception as exc:
+                span.set_attribute("error", True)
+                span.record_exception(exc)
                 raise Neo4jQueryError(
                     f"Vector search failed: {exc}",
                     details={"top_k": top_k},
@@ -699,16 +773,34 @@ class GraphStore:
         if not chunk_ids:
             return []
 
-        async with self.driver.session(database=self._settings.database) as session:
+        start = time.monotonic()
+        tracer = TracingSetup.get_tracer()
+
+        with tracer.start_as_current_span("neo4j.traverse_from_chunks") as span:
+            span.set_attribute("neo4j.operation", "traverse_from_chunks")
+            span.set_attribute("neo4j.chunk_count", len(chunk_ids))
+            span.set_attribute("neo4j.depth", depth)
+
             try:
-                result = await session.run(
-                    _GRAPH_TRAVERSAL,
-                    chunk_ids=chunk_ids,
-                    depth=depth,
-                )
-                records = [record.data() async for record in result]
-                return records
+                async with self.driver.session(database=self._settings.database) as session:
+                    result = await session.run(
+                        _GRAPH_TRAVERSAL,
+                        chunk_ids=chunk_ids,
+                        depth=depth,
+                    )
+                    records = [record.data() async for record in result]
+
+                    duration = time.monotonic() - start
+                    MetricsRegistry.rag_neo4j_query_latency_seconds.labels(
+                        operation="traverse_from_chunks",
+                    ).observe(duration)
+                    span.set_attribute("neo4j.duration_seconds", duration)
+
+                    return records
+
             except Exception as exc:
+                span.set_attribute("error", True)
+                span.record_exception(exc)
                 raise Neo4jQueryError(
                     f"Graph traversal failed: {exc}",
                     details={"chunk_ids": chunk_ids, "depth": depth},
@@ -735,75 +827,90 @@ class GraphStore:
             title, content_preview. Each edge dict has source, target,
             relation_type, weight.
         """
-        async with self.driver.session(database=self._settings.database) as session:
+        start = time.monotonic()
+        tracer = TracingSetup.get_tracer()
+
+        with tracer.start_as_current_span("neo4j.get_graph_for_visualization") as span:
+            span.set_attribute("neo4j.operation", "get_graph_for_visualization")
+            span.set_attribute("neo4j.limit", limit)
+
             try:
-                result = await session.run(
-                    _GRAPH_FOR_VIZ,
-                    limit=limit,
-                )
-                nodes_map: dict[str, dict[str, object]] = {}
-                edges: list[dict[str, object]] = []
+                async with self.driver.session(database=self._settings.database) as session:
+                    result = await session.run(
+                        _GRAPH_FOR_VIZ,
+                        limit=limit,
+                    )
+                    nodes_map: dict[str, dict[str, object]] = {}
+                    edges: list[dict[str, object]] = []
 
-                def _to_viz_node(node: object) -> dict[str, object]:
-                    """Convert Neo4j Node to visualization node dict."""
-                    nid = str(node.get("id", "")) if hasattr(node, "get") else ""
-                    labels_list = list(node.labels) if hasattr(node, "labels") else ["Unknown"]
-                    node_type = labels_list[0] if labels_list else "Unknown"
+                    def _to_viz_node(node: object) -> dict[str, object]:
+                        """Convert Neo4j Node to visualization node dict."""
+                        nid = str(node.get("id", "")) if hasattr(node, "get") else ""
+                        labels_list = list(node.labels) if hasattr(node, "labels") else ["Unknown"]
+                        node_type = labels_list[0] if labels_list else "Unknown"
 
-                    name = ""
-                    label = ""
-                    quality_score = None
+                        name = ""
+                        label = ""
+                        quality_score = None
 
-                    # Try to get a human-readable name from common properties
-                    name = str(node.get("name") or node.get("title") or nid[:8])
+                        # Try to get a human-readable name from common properties
+                        name = str(node.get("name") or node.get("title") or nid[:8])
 
-                    # Set label based on node type
-                    if node_type == "Document":
-                        label = name[:30] + "..." if len(name) > 30 else name
-                    elif node_type == "Chunk":
-                        chunk_index = node.get('chunk_index')
-                        label = f"Chunk #{chunk_index}" if chunk_index is not None else "Chunk"
-                        content = str(node.get("content") or "")
-                        if not name or name == nid[:8]:
-                            name = (content[:200] + "…") if len(content) > 200 else content
-                    elif node_type == "Entity":
-                        label = name[:30] + "..." if len(name) > 30 else name
-                        quality_score = node.get("quality_score")
-                    elif node_type == "Concept":
-                        label = name[:30] + "..." if len(name) > 30 else name
-                    else:
-                        # Unknown or custom node type - use the label as type and name
-                        label = name[:30] + "..." if len(name) > 30 else name
+                        # Set label based on node type
+                        if node_type == "Document":
+                            label = name[:30] + "..." if len(name) > 30 else name
+                        elif node_type == "Chunk":
+                            chunk_index = node.get('chunk_index')
+                            label = f"Chunk #{chunk_index}" if chunk_index is not None else "Chunk"
+                            content = str(node.get("content") or "")
+                            if not name or name == nid[:8]:
+                                name = (content[:200] + "…") if len(content) > 200 else content
+                        elif node_type == "Entity":
+                            label = name[:30] + "..." if len(name) > 30 else name
+                            quality_score = node.get("quality_score")
+                        elif node_type == "Concept":
+                            label = name[:30] + "..." if len(name) > 30 else name
+                        else:
+                            # Unknown or custom node type - use the label as type and name
+                            label = name[:30] + "..." if len(name) > 30 else name
 
-                    return {
-                        "id": nid,
-                        "type": node_type,
-                        "label": label or nid[:8],
-                        "name": name or nid[:8],
-                        "quality_score": quality_score,
-                    }
+                        return {
+                            "id": nid,
+                            "type": node_type,
+                            "label": label or nid[:8],
+                            "name": name or nid[:8],
+                            "quality_score": quality_score,
+                        }
 
-                async for record in result:
-                    n = record["n"]
-                    m = record["m"]
-                    rel_type = record["rel_type"]
-                    weight = record["weight"] or 1.0
+                    async for record in result:
+                        n = record["n"]
+                        m = record["m"]
+                        rel_type = record["rel_type"]
+                        weight = record["weight"] or 1.0
 
-                    for node_obj in (n, m):
-                        nd = _to_viz_node(node_obj)
-                        nodes_map[nd["id"]] = nd
+                        for node_obj in (n, m):
+                            nd = _to_viz_node(node_obj)
+                            nodes_map[nd["id"]] = nd
 
-                    sid = str(n.get("id", ""))
-                    tid = str(m.get("id", ""))
-                    edges.append({
-                        "source": sid,
-                        "target": tid,
-                        "label": rel_type,
-                        "weight": float(weight),
-                    })
+                        sid = str(n.get("id", ""))
+                        tid = str(m.get("id", ""))
+                        edges.append({
+                            "source": sid,
+                            "target": tid,
+                            "label": rel_type,
+                            "weight": float(weight),
+                        })
 
-                return (list(nodes_map.values()), edges)
+                    duration = time.monotonic() - start
+                    MetricsRegistry.rag_neo4j_query_latency_seconds.labels(
+                        operation="get_graph_for_visualization",
+                    ).observe(duration)
+                    span.set_attribute("neo4j.duration_seconds", duration)
+
+                    return (list(nodes_map.values()), edges)
             except Exception as exc:
+                span.set_attribute("error", True)
+                span.record_exception(exc)
                 raise Neo4jQueryError(
                     f"Graph visualization query failed: {exc}",
                     details={"limit": limit},
@@ -816,25 +923,40 @@ class GraphStore:
             Dict with keys: Document, Chunk, Entity, Concept, and optionally
             relationship_count (from a separate query).
         """
-        stats: dict[str, int] = {
-            "Document": 0,
-            "Chunk": 0,
-            "Entity": 0,
-            "Concept": 0,
-        }
-        async with self.driver.session(database=self._settings.database) as session:
+        start = time.monotonic()
+        tracer = TracingSetup.get_tracer()
+
+        with tracer.start_as_current_span("neo4j.get_graph_stats") as span:
+            span.set_attribute("neo4j.operation", "get_graph_stats")
+
+            stats: dict[str, int] = {
+                "Document": 0,
+                "Chunk": 0,
+                "Entity": 0,
+                "Concept": 0,
+            }
             try:
-                result = await session.run(_GRAPH_STATS)
-                async for record in result:
-                    lbl = record["lbl"]
-                    cnt = record["cnt"]
-                    if lbl in stats:
-                        stats[lbl] = cnt
+                async with self.driver.session(database=self._settings.database) as session:
+                    result = await session.run(_GRAPH_STATS)
+                    async for record in result:
+                        lbl = record["lbl"]
+                        cnt = record["cnt"]
+                        if lbl in stats:
+                            stats[lbl] = cnt
+
+                    duration = time.monotonic() - start
+                    MetricsRegistry.rag_neo4j_query_latency_seconds.labels(
+                        operation="get_graph_stats",
+                    ).observe(duration)
+                    span.set_attribute("neo4j.duration_seconds", duration)
+
+                    return stats
             except Exception as exc:
+                span.set_attribute("error", True)
+                span.record_exception(exc)
                 raise Neo4jQueryError(
                     f"Graph stats query failed: {exc}",
                 ) from exc
-        return stats
 
     # ──────────────────────────────────────────
     # Health Check
@@ -842,11 +964,26 @@ class GraphStore:
 
     async def check_connectivity(self) -> bool:
         """Verify the Neo4j connection is alive."""
-        try:
-            await self.driver.verify_connectivity()
-            return True
-        except Exception:
-            return False
+        start = time.monotonic()
+        tracer = TracingSetup.get_tracer()
+
+        with tracer.start_as_current_span("neo4j.check_connectivity") as span:
+            span.set_attribute("neo4j.operation", "check_connectivity")
+
+            try:
+                await self.driver.verify_connectivity()
+
+                duration = time.monotonic() - start
+                MetricsRegistry.rag_neo4j_query_latency_seconds.labels(
+                    operation="check_connectivity",
+                ).observe(duration)
+                span.set_attribute("neo4j.duration_seconds", duration)
+
+                return True
+            except Exception as exc:
+                span.set_attribute("error", True)
+                span.record_exception(exc)
+                return False
 
     # ──────────────────────────────────────────
     # Metadata Management

@@ -10,6 +10,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import time
 import uuid
 from uuid import UUID
 
@@ -21,6 +22,8 @@ from app.domain.nodes import ChunkNode, ConceptNode, EntityNode
 from app.domain.relationships import GraphRelationship
 from app.exceptions import LLMExtractionError, LLMResponseParsingError
 from app.extraction.prompts import ENTITY_EXTRACTION_SYSTEM, ENTITY_EXTRACTION_USER
+from app.observability.metrics import MetricsRegistry
+from app.observability.tracing import TracingSetup
 
 logger = logging.getLogger(__name__)
 
@@ -162,36 +165,100 @@ class GraphExtractor:
         domain_context: dict | None = None,  # New parameter
     ) -> ExtractionResult:
         """Call LLM and parse the response into domain models."""
-        # Use domain-specific prompt if available
-        prompt_system = ENTITY_EXTRACTION_SYSTEM
-        if domain_context:
-            custom_prompt = domain_context.get("extraction_prompt_template")
-            if custom_prompt:
-                prompt_system = custom_prompt
+        start = time.monotonic()
+        tracer = TracingSetup.get_tracer()
 
-        prompt_user = ENTITY_EXTRACTION_USER.format(chunk_content=chunk.content)
+        with tracer.start_as_current_span("rag.extraction") as span:
+            span.set_attribute("chunk.id", str(chunk.id))
+            span.set_attribute("chunk.size", len(chunk.content))
 
-        try:
-            response = await self._llm.ainvoke(
-                [
-                    {"role": "system", "content": prompt_system},
-                    {"role": "user", "content": prompt_user},
-                ]
-            )
-        except Exception as exc:
-            raise LLMExtractionError(
-                f"LLM invocation failed: {exc}",
-                details={"chunk_id": str(chunk.id)},
-            ) from exc
+            try:
+                # Use domain-specific prompt if available
+                prompt_system = ENTITY_EXTRACTION_SYSTEM
+                if domain_context:
+                    custom_prompt = domain_context.get("extraction_prompt_template")
+                    if custom_prompt:
+                        prompt_system = custom_prompt
 
-        raw_text = response.content
-        if not isinstance(raw_text, str):
-            raise LLMResponseParsingError(
-                "LLM returned non-string content",
-                details={"chunk_id": str(chunk.id), "type": type(raw_text).__name__},
-            )
+                prompt_user = ENTITY_EXTRACTION_USER.format(chunk_content=chunk.content)
 
-        return self._parse_llm_response(raw_text, chunk.id)
+                # LLM call
+                with tracer.start_as_current_span("llm.invoke") as llm_span:
+                    llm_start = time.monotonic()
+                    llm_span.set_attribute("llm.model", self._llm.model_name)
+
+                    try:
+                        response = await self._llm.ainvoke(
+                            [
+                                {"role": "system", "content": prompt_system},
+                                {"role": "user", "content": prompt_user},
+                            ]
+                        )
+                    except Exception as exc:
+                        raise LLMExtractionError(
+                            f"LLM invocation failed: {exc}",
+                            details={"chunk_id": str(chunk.id)},
+                        ) from exc
+
+                    raw_text = response.content
+                    if not isinstance(raw_text, str):
+                        raise LLMResponseParsingError(
+                            "LLM returned non-string content",
+                            details={"chunk_id": str(chunk.id), "type": type(raw_text).__name__},
+                        )
+
+                    llm_duration = time.monotonic() - llm_start
+                    MetricsRegistry.rag_llm_latency_seconds.labels(
+                        model=self._llm.model_name,
+                        operation="extraction",
+                    ).observe(llm_duration)
+                    MetricsRegistry.rag_llm_calls_total.labels(
+                        model=self._llm.model_name,
+                        operation="extraction",
+                        status="success",
+                    ).inc()
+
+                    llm_span.set_attribute("llm.duration_seconds", llm_duration)
+
+                # Parse response
+                result = self._parse_llm_response(raw_text, chunk.id)
+
+                # Record success metrics
+                MetricsRegistry.rag_extraction_success_total.inc()
+
+                # Determine chunk size bucket
+                chunk_size = len(chunk.content)
+                if chunk_size < 256:
+                    size_bucket = "small"
+                elif chunk_size < 512:
+                    size_bucket = "medium"
+                else:
+                    size_bucket = "large"
+
+                duration = time.monotonic() - start
+                MetricsRegistry.rag_extraction_latency_seconds.labels(
+                    chunk_size_bucket=size_bucket,
+                ).observe(duration)
+
+                span.set_attribute("extraction.entities_count", len(result.entities))
+                span.set_attribute("extraction.concepts_count", len(result.concepts))
+                span.set_attribute("extraction.relationships_count", len(result.relationships))
+                span.set_attribute("extraction.duration_seconds", duration)
+
+                return result
+
+            except Exception as exc:
+                MetricsRegistry.rag_extraction_failure_total.labels(
+                    error_type=type(exc).__name__,
+                ).inc()
+                MetricsRegistry.rag_llm_calls_total.labels(
+                    model=self._llm.model_name,
+                    operation="extraction",
+                    status="error",
+                ).inc()
+                span.set_attribute("error", True)
+                span.record_exception(exc)
+                raise
 
     def _parse_llm_response(
         self,
