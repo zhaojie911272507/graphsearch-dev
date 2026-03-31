@@ -17,6 +17,7 @@ from prometheus_client import CONTENT_TYPE_LATEST
 
 from app.observability.metrics import MetricsRegistry
 from app.observability.tracing import TracingSetup
+from app.observability.logging import setup_enhanced_logging
 
 from app.api.routes import ingest, query
 from app.api.routes import metadata, ontology, intelligence, evaluation, domains, audit, documents, simulation
@@ -33,22 +34,8 @@ logger = structlog.get_logger(__name__)
 
 def _configure_logging(settings: Settings) -> None:
     """Configure structlog and stdlib logging."""
-    log_level = getattr(logging, settings.app.log_level.upper(), logging.INFO)
-
-    structlog.configure(
-        processors=[
-            structlog.contextvars.merge_contextvars,
-            structlog.processors.add_log_level,
-            structlog.processors.StackInfoRenderer(),
-            structlog.dev.set_exc_info,
-            structlog.processors.TimeStamper(fmt="iso"),
-            structlog.dev.ConsoleRenderer() if settings.app.app_debug else structlog.processors.JSONRenderer(),
-        ],
-        wrapper_class=structlog.make_filtering_bound_logger(log_level),
-        context_class=dict,
-        logger_factory=structlog.PrintLoggerFactory(),
-        cache_logger_on_first_use=True,
-    )
+    # Use enhanced logging with trace context
+    setup_enhanced_logging(debug=settings.app.app_debug, log_level=settings.app.log_level)
 
 
 @asynccontextmanager
