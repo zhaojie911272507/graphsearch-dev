@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/Input'
 import { Badge } from '@/components/ui/Badge'
 import { FileText, Clock, CheckCircle, XCircle, Search, Trash2 } from 'lucide-react'
 import { Link } from 'react-router-dom'
+import { useToast } from '@/contexts/ToastContext'
 
 interface DocumentItem {
   id: string
@@ -24,6 +25,7 @@ interface DocumentItem {
 export function DocumentManager() {
   const [searchQuery, setSearchQuery] = useState('')
   const [domainKey] = useState<string | undefined>(undefined)
+  const { toast } = useToast()
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['documents', { q: searchQuery }],
@@ -41,10 +43,18 @@ export function DocumentManager() {
 
     try {
       await documentApi.delete(documentId)
+      toast({
+        title: '删除成功',
+        description: '文档已从系统中删除',
+      })
       refetch()
     } catch (error) {
       console.error('Delete failed:', error)
-      alert('删除文档失败')
+      toast({
+        title: '删除失败',
+        description: error instanceof Error ? error.message : '请稍后重试',
+        variant: 'destructive',
+      })
     }
   }
 
@@ -111,7 +121,7 @@ export function DocumentManager() {
         <CardContent>
           <DocumentUpload
             onUploadSuccess={handleUploadSuccess}
-            onUploadError={(error) => alert(`上传失败: ${error.message}`)}
+            onUploadError={(error) => toast({ title: "上传失败", description: error.message, variant: "destructive" })}
             domainKey={domainKey}
           />
         </CardContent>
