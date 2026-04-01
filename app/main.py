@@ -20,6 +20,9 @@ from app.api.routes import simulation_exec, simulation_report, simulation_dialog
 from app.api.routes import auth
 from app.visualization.routes import router as viz_router
 from app.config import Settings, get_settings
+from app.observability.metrics import MetricsRegistry
+from app.observability.tracing import TracingSetup
+from app.observability.logging import setup_enhanced_logging
 from app.domain.schemas import HealthResponse
 from app.embedding.service import EmbeddingService
 from app.extraction.extractor import GraphExtractor
@@ -30,22 +33,8 @@ logger = structlog.get_logger(__name__)
 
 def _configure_logging(settings: Settings) -> None:
     """Configure structlog and stdlib logging."""
-    log_level = getattr(logging, settings.app.log_level.upper(), logging.INFO)
-
-    structlog.configure(
-        processors=[
-            structlog.contextvars.merge_contextvars,
-            structlog.processors.add_log_level,
-            structlog.processors.StackInfoRenderer(),
-            structlog.dev.set_exc_info,
-            structlog.processors.TimeStamper(fmt="iso"),
-            structlog.dev.ConsoleRenderer() if settings.app.app_debug else structlog.processors.JSONRenderer(),
-        ],
-        wrapper_class=structlog.make_filtering_bound_logger(log_level),
-        context_class=dict,
-        logger_factory=structlog.PrintLoggerFactory(),
-        cache_logger_on_first_use=True,
-    )
+    # Use enhanced logging with trace context
+    setup_enhanced_logging(debug=settings.app.app_debug)
 
 
 @asynccontextmanager
@@ -64,6 +53,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """
     settings = get_settings()
     _configure_logging(settings)
+
+    # Initialize OpenTelemetry tracing
+    TracingSetup.initialize(settings)
 
     log = structlog.get_logger("lifespan")
     await log.ainfo("Starting Graph RAG system", env=settings.app.app_env)
@@ -192,6 +184,25 @@ def create_app() -> FastAPI:
             neo4j_connected=neo4j_ok,
             embedding_model_loaded=embedding_ok,
         )
+
+    # Metrics endpoint
+    @app.get("/metrics", tags=["Observability"])
+    async def metrics():
+        """Prometheus metrics endpoint."""
+        from fastapi.responses import Response
+        from prometheus_client import CONTENT_TYPE_LATEST
+
+        settings = get_settings()
+        if not settings.observability.metrics_enabled:
+            return Response(status_code=503, content="Metrics disabled")
+
+        return Response(
+            content=MetricsRegistry.generate_metrics(),
+            media_type=CONTENT_TYPE_LATEST,
+        )
+
+    # Instrument FastAPI with OpenTelemetry
+    TracingSetup.instrument_app(app)
 
     return app
 

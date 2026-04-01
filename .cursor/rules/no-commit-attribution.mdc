@@ -1,0 +1,19 @@
+---
+description: 禁止在 git 提交中添加 Made-with: Cursor 等归属信息
+alwaysApply: true
+---
+
+# Git 提交规范
+
+执行 git commit 时：
+- **不要**在提交信息中附加 `Made-with: Cursor`、`Co-authored-by` 等 Cursor 归属 trailer
+- 仅保留用户指定的 commit message 内容
+
+**重要（Agent）**：在 Cursor 内执行 `git commit` / `git commit --amend` 时，IDE 可能在提交对象写入**之后**仍自动追加 `Made-with: Cursor`；这与 `-m` 里写的内容无关，**规则文件无法单独禁止该行为**。因此：
+
+1. **首选**：在 **Cursor Settings → Agent → Attribution** 中关闭 **Commit Attribution**（与仓库规则一致，从源头去掉注入）。
+2. **若必须由 Agent 改写历史且不能关 Attribution**：用底层命令生成提交对象，避免走会注入 trailer 的封装，例如（保留原 tree、parent 与作者时间）：
+   - `printf '%s\n' "<完整 message>" | git commit-tree "$(git rev-parse HEAD^{tree})" -p "$(git rev-parse HEAD^)"`
+   - 再 `git reset --hard <新 SHA>`（按需 `git branch -f main HEAD`）
+
+用户已在规则中明确要求无归属 trailer；Agent 提交后若发现 `git log -1` 仍含 `Made-with:`，应主动用上述方式修正或提示用户关闭 Attribution。

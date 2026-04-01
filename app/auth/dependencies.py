@@ -68,17 +68,17 @@ async def require_auth(
     return user
 
 
-async def require_role(
-    allowed_roles: list[str],
-    user: User = Depends(require_auth),
-) -> User:
-    """Require specific role(s) or raise 403."""
-    if user.role not in allowed_roles:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Insufficient permissions",
-        )
-    return user
+def require_role(allowed_roles: list[str]):
+    """Require specific role(s) or raise 403. This is a dependency factory."""
+    async def _require_role(user: User = Depends(require_auth)) -> User:
+        """Inner dependency that checks roles."""
+        if user.role not in allowed_roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Insufficient permissions",
+            )
+        return user
+    return _require_role
 
 
 # Type alias for dependency injection
