@@ -68,6 +68,11 @@ class LineageResponseSchema(BaseModel):
     lineage_paths: list[LineagePathSchema] = Field(default_factory=list)
     upstream_count: int = 0
     downstream_count: int = 0
+    # Extended fields for React Flow visualization
+    nodes: list[dict[str, Any]] = Field(default_factory=list, description="Flattened nodes for visualization")
+    edges: list[dict[str, Any]] = Field(default_factory=list, description="Flattened edges for visualization")
+    available_node_types: list[str] = Field(default_factory=list, description="Available node types for filtering")
+    available_relation_types: list[str] = Field(default_factory=list, description="Available relation types for filtering")
 
 
 class AnnotationSchema(BaseModel):

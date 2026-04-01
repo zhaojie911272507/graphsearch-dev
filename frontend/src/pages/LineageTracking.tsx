@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import ReactFlow, {
   MiniMap,
   Controls,
@@ -10,17 +10,55 @@ import ReactFlow, {
   Edge,
   ReactFlowInstance,
   MarkerType,
+  Position,
 } from 'reactflow'
+import dagre from 'dagre'
 import 'reactflow/dist/style.css'
 import { useQuery } from '@tanstack/react-query'
 import { assetApi } from '@/lib/api'
 import { useParams } from 'react-router-dom'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
-import { ArrowLeft, GitBranch, AlertCircle, XCircle } from 'lucide-react'
+import { ArrowLeft, GitBranch, AlertCircle, XCircle, Filter } from 'lucide-react'
 import { Link } from 'react-router-dom'
 
 type LineageDirection = 'upstream' | 'downstream' | 'both'
+
+// Dagre layout function
+const getLayoutedElements = (nodes: Node[], edges: Edge[], direction = 'TB') => {
+  const dagreGraph = new dagre.graphlib.Graph()
+  dagreGraph.setDefaultEdgeLabel(() => ({}))
+
+  const nodeWidth = 170
+  const nodeHeight = 50
+
+  dagreGraph.setGraph({ rankdir: direction, nodesep: 50, ranksep: 80 })
+
+  nodes.forEach((node) => {
+    dagreGraph.setNode(node.id, { width: nodeWidth, height: nodeHeight })
+  })
+
+  edges.forEach((edge) => {
+    dagreGraph.setEdge(edge.source, edge.target)
+  })
+
+  dagre.layout(dagreGraph)
+
+  const layoutedNodes = nodes.map((node) => {
+    const nodeWithPosition = dagreGraph.node(node.id)
+    return {
+      ...node,
+      position: {
+        x: nodeWithPosition.x - nodeWidth / 2,
+        y: nodeWithPosition.y - nodeHeight / 2,
+      },
+      targetPosition: direction === 'LR' ? Position.Left : Position.Top,
+      sourcePosition: direction === 'LR' ? Position.Right : Position.Bottom,
+    }
+  })
+
+  return { nodes: layoutedNodes, edges }
+}
 
 export default function LineageTracking() {
   const { nodeId } = useParams<{ nodeId: string }>()
@@ -28,15 +66,43 @@ export default function LineageTracking() {
   const [edges, setEdges, onEdgesChange] = useEdgesState([])
   const [direction, setDirection] = useState<LineageDirection>('both')
   const [reactFlowInstance, setReactFlowInstance] = useState<ReactFlowInstance | null>(null)
+  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set())
+  const [isExpanding, setIsExpanding] = useState(false)
+
+  // Filter states
+  const [selectedNodeTypes, setSelectedNodeTypes] = useState<string[]>([])
+  const [selectedRelationTypes, setSelectedRelationTypes] = useState<string[]>([])
+  const [availableNodeTypes, setAvailableNodeTypes] = useState<string[]>([])
+  const [availableRelationTypes, setAvailableRelationTypes] = useState<string[]>([])
+
+  // Ref to persist edges for layout calculations
+  const edgesRef = useRef<Edge[]>([])
+  useEffect(() => {
+    edgesRef.current = edges
+  }, [edges])
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ['lineage', nodeId, direction],
+    queryKey: ['lineage', nodeId, direction, selectedNodeTypes, selectedRelationTypes],
     queryFn: () =>
       assetApi
-        .getLineage(nodeId!, direction !== 'both' ? direction : undefined, 3)
+        .getLineage(
+          nodeId!,
+          direction !== 'both' ? direction : undefined,
+          0, // 0 triggers auto-calculate
+          selectedNodeTypes.length > 0 ? selectedNodeTypes : undefined,
+          selectedRelationTypes.length > 0 ? selectedRelationTypes : undefined
+        )
         .then(res => res.data),
     enabled: !!nodeId,
   })
+
+  // Update available types when data loads
+  useEffect(() => {
+    if (data) {
+      setAvailableNodeTypes(data.available_node_types || [])
+      setAvailableRelationTypes(data.available_relation_types || [])
+    }
+  }, [data])
 
   const getNodeColor = useCallback((type: string) => {
     switch (type) {
@@ -152,9 +218,64 @@ export default function LineageTracking() {
   useEffect(() => {
     if (!data) return
 
-    const { nodes: processedNodes, edges: processedEdges } = processLineageData(data)
-    setNodes(processedNodes)
-    setEdges(processedEdges)
+    // Use backend-provided nodes/edges if available, otherwise process from paths
+    let processedNodes: Node[] = []
+    let processedEdges: Edge[] = []
+
+    if (data.nodes && data.nodes.length > 0) {
+      // Use nodes from backend
+      processedNodes = data.nodes.map((node: any) => ({
+        id: node.id,
+        position: { x: 0, y: 0 }, // Will be set by Dagre
+        data: {
+          label: node.name || node.label || node.id,
+          type: node.node_type || node.type || 'Unknown',
+        },
+        style: {
+          backgroundColor: getNodeColor(node.node_type || node.type || 'Unknown'),
+          border: `2px solid ${getNodeColor(node.node_type || node.type || 'Unknown')}`,
+          width: 140,
+          height: 40,
+          borderRadius: '4px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          color: 'white',
+          fontSize: '12px',
+          fontWeight: 'bold',
+        },
+      }))
+
+      processedEdges = data.edges.map((edge: any, idx: number) => ({
+        id: `e-${idx}`,
+        source: edge.source,
+        target: edge.target,
+        label: edge.label || '',
+        animated: true,
+        style: {
+          stroke: '#9ca3af',
+          strokeWidth: 2,
+        },
+        markerEnd: {
+          type: MarkerType.Arrow,
+        },
+      }))
+    } else {
+      // Fallback: process from lineage_paths
+      const result = processLineageData(data)
+      processedNodes = result.nodes
+      processedEdges = result.edges
+    }
+
+    // Apply Dagre layout
+    const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(
+      processedNodes,
+      processedEdges,
+      'TB'
+    )
+
+    setNodes(layoutedNodes)
+    setEdges(layoutedEdges)
 
     // Fit view after nodes are updated
     setTimeout(() => {
@@ -253,8 +374,71 @@ export default function LineageTracking() {
               下游
             </Button>
           </div>
+
+          {/* Node type filter */}
+          {availableNodeTypes.length > 0 && (
+            <div className="flex items-center gap-2">
+              <Filter className="h-4 w-4 text-gray-500" />
+              <select
+                multiple
+                className="border rounded px-2 py-1 text-sm min-w-[120px] h-8"
+                value={selectedNodeTypes}
+                onChange={(e) => {
+                  const values = Array.from(e.target.selectedOptions, o => o.value)
+                  setSelectedNodeTypes(values)
+                }}
+              >
+                {availableNodeTypes.map(type => (
+                  <option key={type} value={type}>{type}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {/* Relation type filter */}
+          {availableRelationTypes.length > 0 && (
+            <div className="flex items-center gap-2">
+              <select
+                multiple
+                className="border rounded px-2 py-1 text-sm min-w-[120px] h-8"
+                value={selectedRelationTypes}
+                onChange={(e) => {
+                  const values = Array.from(e.target.selectedOptions, o => o.value)
+                  setSelectedRelationTypes(values)
+                }}
+              >
+                {availableRelationTypes.map(type => (
+                  <option key={type} value={type}>{type}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {/* Clear filters */}
+          {(selectedNodeTypes.length > 0 || selectedRelationTypes.length > 0) && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setSelectedNodeTypes([])
+                setSelectedRelationTypes([])
+              }}
+            >
+              清除过滤
+            </Button>
+          )}
         </div>
       </div>
+
+      {/* Loading indicator for expand */}
+      {isExpanding && (
+        <div className="absolute top-20 right-4 bg-white shadow-lg rounded-lg p-3 z-10">
+          <div className="flex items-center gap-2">
+            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+            <span className="text-sm">加载更多...</span>
+          </div>
+        </div>
+      )}
 
       <Card className="h-[700px]">
         <CardHeader>
@@ -280,6 +464,79 @@ export default function LineageTracking() {
             fitView
             fitViewOptions={{ padding: 0.2 }}
             proOptions={{ hideAttribution: true }}
+            onNodeClick={async (_event, node) => {
+              if (expandedNodes.has(node.id)) {
+                // Already expanded, show details (could navigate to node detail)
+                return
+              }
+              // Expand node lineage
+              setIsExpanding(true)
+              try {
+                const expandData = await assetApi.getLineage(
+                  node.id,
+                  direction !== 'both' ? direction : undefined,
+                  1,
+                  selectedNodeTypes.length > 0 ? selectedNodeTypes : undefined,
+                  selectedRelationTypes.length > 0 ? selectedRelationTypes : undefined
+                ).then(res => res.data)
+
+                // Merge new nodes and edges
+                let newNodes: Node[] = []
+                let newEdges: Edge[] = []
+
+                if (expandData.nodes && expandData.nodes.length > 0) {
+                  newNodes = expandData.nodes.map((n: any) => ({
+                    id: n.id,
+                    position: { x: 0, y: 0 },
+                    data: {
+                      label: n.name || n.label || n.id,
+                      type: n.node_type || n.type || 'Unknown',
+                    },
+                    style: {
+                      backgroundColor: getNodeColor(n.node_type || n.type || 'Unknown'),
+                      border: `2px solid ${getNodeColor(n.node_type || n.type || 'Unknown')}`,
+                      width: 100,
+                      height: 40,
+                      borderRadius: '4px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      color: 'white',
+                      fontSize: '12px',
+                    },
+                  }))
+
+                  newEdges = expandData.edges.map((e: any, idx: number) => ({
+                    id: `e-expand-${idx}`,
+                    source: e.source,
+                    target: e.target,
+                    label: e.label || '',
+                    animated: true,
+                    style: { stroke: '#9ca3af', strokeWidth: 2 },
+                    markerEnd: { type: MarkerType.Arrow },
+                  }))
+                }
+
+                // Merge with existing
+                setNodes(prev => {
+                  const existingIds = new Set(prev.map(n => n.id))
+                  const uniqueNewNodes = newNodes.filter(n => !existingIds.has(n.id))
+                  const allNodes = [...prev, ...uniqueNewNodes]
+                  return getLayoutedElements(allNodes, edgesRef.current, 'TB').nodes
+                })
+                setEdges(prev => {
+                  const existingIds = new Set(prev.map(e => e.id))
+                  const uniqueNewEdges = newEdges.filter(e => !existingIds.has(e.id))
+                  return [...prev, ...uniqueNewEdges]
+                })
+
+                setExpandedNodes(prev => new Set([...prev, node.id]))
+              } catch (err) {
+                console.error('Failed to expand node:', err)
+              } finally {
+                setIsExpanding(false)
+              }
+            }}
           >
             <Controls />
             <MiniMap />

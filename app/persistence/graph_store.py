@@ -991,51 +991,224 @@ class GraphStore:
         self,
         node_id: str,
         direction: str = "both",
-        max_depth: int = 3,
+        max_depth: int | None = None,
+        node_types: list[str] | None = None,
+        relation_types: list[str] | None = None,
     ) -> dict[str, object]:
-        """Get lineage paths for a node."""
+        """Get lineage paths for a node with optional filtering."""
+        # Auto-calculate depth if not provided
+        if max_depth is None:
+            max_depth = await self._calculate_optimal_lineage_depth(node_id, direction)
+
         async with self.driver.session(database=self._settings.database) as session:
             paths = []
             upstream_count = 0
             downstream_count = 0
 
+            # Collect all nodes and edges for visualization
+            all_nodes: dict[str, dict] = {}
+            all_edges: list[dict] = []
+            all_node_types: set[str] = set()
+            all_relation_types: set[str] = set()
+
+            # Build filter conditions
+            node_type_filter = ""
+            if node_types:
+                type_list = "[" + ",".join([f"'{t}'" for t in node_types]) + "]"
+                node_type_filter = f"WHERE ANY(t IN labels(node) WHERE t IN {type_list})"
+
+            relation_type_filter = ""
+            if relation_types:
+                rel_list = "[" + ",".join([f"'{t}'" for t in relation_types]) + "]"
+                relation_type_filter = f"AND type(r) IN {rel_list}"
+
             if direction in ("upstream", "both"):
-                query_up = """
-                MATCH path = (start {id: $node_id})<-[*1..$depth]-(source)
-                WITH path, [node IN nodes(path) | {
-                    id: node.id,
-                    node_type: labels(node)[0],
-                    name: coalesce(node.name, node.title, node.id)
-                }] as nodes
-                RETURN nodes, length(path) as hop_count
-                LIMIT 10
+                query_up = f"""
+                MATCH path = (start {{id: $node_id}})<-[r*1..{max_depth}]-(node)
+                {node_type_filter} {relation_type_filter}
+                WITH path, [n IN nodes(path) | {{
+                    id: n.id,
+                    node_type: labels(n)[0],
+                    name: coalesce(n.name, n.title, n.id)
+                }}] as path_nodes,
+                [r IN relationships(path) as rel | {{
+                    source: start.id,
+                    target: node.id,
+                    type: type(r),
+                    label: type(r)
+                }}] as path_rels
+                RETURN path_nodes, path_rels, length(path) as hop_count
+                LIMIT 50
                 """
-                result = await session.run(query_up, node_id=node_id, depth=max_depth)
+                result = await session.run(query_up, node_id=node_id)
                 async for record in result:
-                    paths.append({"nodes": record["nodes"], "confidence": 1.0})
+                    path_nodes = record["path_nodes"]
+                    path_rels = record["path_rels"]
+                    paths.append({"nodes": path_nodes, "confidence": 1.0})
                     upstream_count += 1
 
+                    # Collect nodes and edges for visualization
+                    for node in path_nodes:
+                        node_id_val = node.get("id", "")
+                        node_type = node.get("node_type", "Unknown")
+                        all_nodes[node_id_val] = node
+                        all_node_types.add(node_type)
+
+                    for rel in path_rels:
+                        all_edges.append({
+                            "source": rel.get("source", ""),
+                            "target": rel.get("target", ""),
+                            "label": rel.get("label", ""),
+                            "type": rel.get("type", ""),
+                        })
+                        rel_type = rel.get("label", "")
+                        if rel_type:
+                            all_relation_types.add(rel_type)
+
             if direction in ("downstream", "both"):
-                query_down = """
-                MATCH path = (start {id: $node_id})-[*1..$depth]->(derived)
-                WITH path, [node IN nodes(path) | {
-                    id: node.id,
-                    node_type: labels(node)[0],
-                    name: coalesce(node.name, node.title, node.id)
-                }] as nodes
-                RETURN nodes, length(path) as hop_count
-                LIMIT 10
+                query_down = f"""
+                MATCH path = (start {{id: $node_id}})-[r*1..{max_depth}]->(node)
+                {node_type_filter} {relation_type_filter}
+                WITH path, [n IN nodes(path) | {{
+                    id: n.id,
+                    node_type: labels(n)[0],
+                    name: coalesce(n.name, n.title, n.id)
+                }}] as path_nodes,
+                [r IN relationships(path) as rel | {{
+                    source: start.id,
+                    target: node.id,
+                    type: type(r),
+                    label: type(r)
+                }}] as path_rels
+                RETURN path_nodes, path_rels, length(path) as hop_count
+                LIMIT 50
                 """
-                result = await session.run(query_down, node_id=node_id, depth=max_depth)
+                result = await session.run(query_down, node_id=node_id)
                 async for record in result:
-                    paths.append({"nodes": record["nodes"], "confidence": 1.0})
+                    path_nodes = record["path_nodes"]
+                    path_rels = record["path_rels"]
+                    paths.append({"nodes": path_nodes, "confidence": 1.0})
                     downstream_count += 1
+
+                    # Collect nodes and edges for visualization
+                    for node in path_nodes:
+                        node_id_val = node.get("id", "")
+                        node_type = node.get("node_type", "Unknown")
+                        all_nodes[node_id_val] = node
+                        all_node_types.add(node_type)
+
+                    for rel in path_rels:
+                        all_edges.append({
+                            "source": rel.get("source", ""),
+                            "target": rel.get("target", ""),
+                            "label": rel.get("label", ""),
+                            "type": rel.get("type", ""),
+                        })
+                        rel_type = rel.get("label", "")
+                        if rel_type:
+                            all_relation_types.add(rel_type)
+
+            # If no filtering applied, get all available types
+            if not node_types:
+                all_node_types = await self._get_available_node_types(node_id, direction, max_depth)
+            if not relation_types:
+                all_relation_types = await self._get_available_relation_types(node_id, direction, max_depth)
 
             return {
                 "paths": paths,
                 "upstream_count": upstream_count,
                 "downstream_count": downstream_count,
+                "nodes": list(all_nodes.values()),
+                "edges": all_edges,
+                "available_node_types": sorted(list(all_node_types)),
+                "available_relation_types": sorted(list(all_relation_types)),
             }
+
+    async def _calculate_optimal_lineage_depth(
+        self, node_id: str, direction: str, target_nodes: int = 100
+    ) -> int:
+        """Calculate optimal depth that returns approximately target_nodes."""
+        async with self.driver.session(database=self._settings.database) as session:
+            # Query to count nodes at each depth level
+            if direction in ("upstream", "both"):
+                query = """
+                MATCH (start {id: $node_id})<-[*1..5]-(source)
+                RETURN count(DISTINCT source) as node_count
+                """
+                result = await session.run(query, node_id=node_id)
+                record = await result.single()
+                if record and record["node_count"] >= target_nodes:
+                    return 2
+
+            if direction in ("downstream", "both"):
+                query = """
+                MATCH (start {id: $node_id})-[*1..5]->(derived)
+                RETURN count(DISTINCT derived) as node_count
+                """
+                result = await session.run(query, node_id=node_id)
+                record = await result.single()
+                if record and record["node_count"] >= target_nodes:
+                    return 2
+
+            return 3  # Default
+
+    async def _get_available_node_types(
+        self, node_id: str, direction: str, max_depth: int
+    ) -> set[str]:
+        """Get all available node types for filtering."""
+        async with self.driver.session(database=self._settings.database) as session:
+            types: set[str] = set()
+
+            if direction in ("upstream", "both"):
+                query = f"""
+                MATCH (start {{id: $node_id}})<-[*1..{max_depth}]-(node)
+                RETURN collect(DISTINCT labels(node)[0]) as types
+                """
+                result = await session.run(query, node_id=node_id)
+                record = await result.single()
+                if record:
+                    types.update(record.get("types", []))
+
+            if direction in ("downstream", "both"):
+                query = f"""
+                MATCH (start {{id: $node_id}})-[*1..{max_depth}]->(node)
+                RETURN collect(DISTINCT labels(node)[0]) as types
+                """
+                result = await session.run(query, node_id=node_id)
+                record = await result.single()
+                if record:
+                    types.update(record.get("types", []))
+
+            return types
+
+    async def _get_available_relation_types(
+        self, node_id: str, direction: str, max_depth: int
+    ) -> set[str]:
+        """Get all available relation types for filtering."""
+        async with self.driver.session(database=self._settings.database) as session:
+            types: set[str] = set()
+
+            if direction in ("upstream", "both"):
+                query = f"""
+                MATCH (start {{id: $node_id}})-[r*1..{max_depth}]->(node)
+                RETURN collect(DISTINCT type(r)) as types
+                """
+                result = await session.run(query, node_id=node_id)
+                record = await result.single()
+                if record:
+                    types.update(record.get("types", []))
+
+            if direction in ("downstream", "both"):
+                query = f"""
+                MATCH (start {{id: $node_id}})<-[r*1..{max_depth}]-(node)
+                RETURN collect(DISTINCT type(r)) as types
+                """
+                result = await session.run(query, node_id=node_id)
+                record = await result.single()
+                if record:
+                    types.update(record.get("types", []))
+
+            return types
 
     @with_retry(max_attempts=3, timeout=30.0)
     async def get_node_annotations(

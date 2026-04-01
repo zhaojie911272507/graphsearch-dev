@@ -128,8 +128,16 @@ export const assetApi = {
 
   getDetail: (nodeId: string) => api.get(`/metadata/${nodeId}`),
 
-  getLineage: (nodeId: string, direction?: string, max_depth?: number) =>
-    api.get(`/metadata/${nodeId}/lineage`, { params: { direction, max_depth } }),
+  getLineage: (
+    nodeId: string,
+    direction?: string,
+    max_depth?: number,
+    node_types?: string[],
+    relation_types?: string[]
+  ) =>
+    api.get(`/metadata/${nodeId}/lineage`, {
+      params: { direction, max_depth, node_types, relation_types }
+    }),
 
   getAnnotations: (nodeId: string) => api.get(`/metadata/${nodeId}/annotations`),
 

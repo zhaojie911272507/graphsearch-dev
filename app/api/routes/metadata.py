@@ -279,20 +279,24 @@ async def get_node_detail(
     "/{node_id}/lineage",
     response_model=LineageResponseSchema,
     summary="Get data lineage",
-    description="Trace the lineage of a node (upstream sources and downstream derivations).",
+    description="Trace the lineage of a node with filtering and dynamic depth.",
 )
 async def get_node_lineage(
     node_id: UUID,
     store: GraphStoreDep,
     direction: str = Query(default="both", description="upstream, downstream, or both"),
-    max_depth: int = Query(default=3, ge=1, le=5),
+    max_depth: int = Query(default=0, ge=0, le=10, description="0 = auto-calculate"),
+    node_types: list[str] = Query(default=[], description="Filter by node types"),
+    relation_types: list[str] = Query(default=[], description="Filter by relation types"),
 ) -> LineageResponseSchema:
     """Get lineage information for a node."""
     try:
         lineage_data = await store.get_node_lineage(
             str(node_id),
             direction=direction,
-            max_depth=max_depth,
+            max_depth=max_depth if max_depth > 0 else None,
+            node_types=node_types or None,
+            relation_types=relation_types or None,
         )
 
         paths = []
@@ -313,6 +317,10 @@ async def get_node_lineage(
             lineage_paths=paths,
             upstream_count=lineage_data.get("upstream_count", 0),
             downstream_count=lineage_data.get("downstream_count", 0),
+            nodes=lineage_data.get("nodes", []),
+            edges=lineage_data.get("edges", []),
+            available_node_types=lineage_data.get("available_node_types", []),
+            available_relation_types=lineage_data.get("available_relation_types", []),
         )
 
     except Exception as exc:
