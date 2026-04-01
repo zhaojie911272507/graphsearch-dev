@@ -29,14 +29,16 @@ export const api = axios.create({
   },
 })
 
-// Request interceptor for logging
+// Request interceptor to add auth token
 api.interceptors.request.use(
   (config) => {
-    console.log(`[API] ${config.method?.toUpperCase()} ${config.url}`)
+    const token = localStorage.getItem('access_token')
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`
+    }
     return config
   },
   (error) => {
-    console.error('[API] Request error:', error)
     return Promise.reject(error)
   }
 )
@@ -74,6 +76,13 @@ api.interceptors.response.use(
       switch (status) {
         case 400:
           errorMessage = data?.detail || '请求参数错误'
+          break
+        case 401:
+          errorMessage = '未授权，请登录'
+          // Clear token and redirect to login
+          localStorage.removeItem('access_token')
+          localStorage.removeItem('user')
+          window.location.href = '/login'
           break
         case 401:
           errorMessage = '未授权，请登录'
@@ -314,6 +323,42 @@ const formDataUploadConfig: AxiosRequestConfig = {
       return data
     },
   ],
+}
+
+// Auth APIs
+export const authApi = {
+  login: (username: string, password: string) =>
+    api.post('/auth/login', { username, password }),
+
+  logout: () => api.post('/auth/logout'),
+
+  getCurrentUser: () => api.get('/auth/me'),
+
+  getUsers: () => api.get('/auth/users'),
+
+  createUser: (data: { username: string; password: string; name: string; role: string }) =>
+    api.post('/auth/users', data),
+
+  updateUserRole: (username: string, role: string) =>
+    api.put(`/auth/users/${username}/role`, null, { params: { role } }),
+}
+
+// Helper to get current user from localStorage
+export const getCurrentUser = () => {
+  const userStr = localStorage.getItem('user')
+  return userStr ? JSON.parse(userStr) : null
+}
+
+// Helper to check if logged in
+export const isLoggedIn = () => {
+  return !!localStorage.getItem('access_token')
+}
+
+// Helper to logout
+export const logout = () => {
+  localStorage.removeItem('access_token')
+  localStorage.removeItem('user')
+  window.location.href = '/login'
 }
 
 // Document Management APIs

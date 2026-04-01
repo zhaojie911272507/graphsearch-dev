@@ -1,4 +1,4 @@
-import { Routes, Route } from 'react-router-dom'
+import { Routes, Route, Navigate } from 'react-router-dom'
 import { Layout } from './components/layout/Layout'
 import { AssetCatalog } from './pages/AssetCatalog'
 import { NodeDetail } from './pages/NodeDetail'
@@ -18,11 +18,29 @@ import { SimulationExecution } from './pages/SimulationExecution'
 import { SimulationReports } from './pages/SimulationReports'
 import { SimulationDialogue } from './pages/SimulationDialogue'
 import PipelineConfig from './pages/PipelineConfig'
+import Login from './pages/Login'
+import { isLoggedIn } from './lib/api'
+
+// Protected route wrapper
+function ProtectedRoute({ children }: { children: React.ReactNode }) {
+  if (!isLoggedIn()) {
+    return <Navigate to="/login" replace />
+  }
+  return <>{children}</>
+}
 
 function App() {
   return (
     <Routes>
-      <Route path="/" element={<Layout />}>
+      {/* Public routes */}
+      <Route path="/login" element={<Login />} />
+
+      {/* Protected routes */}
+      <Route path="/" element={
+        <ProtectedRoute>
+          <Layout />
+        </ProtectedRoute>
+      }>
         <Route index element={<AssetCatalog />} />
         <Route path="assets" element={<AssetCatalog />} />
         <Route path="assets/:nodeId" element={<NodeDetail />} />

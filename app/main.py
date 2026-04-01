@@ -17,6 +17,7 @@ from fastapi.responses import RedirectResponse
 from app.api.routes import ingest, query
 from app.api.routes import metadata, ontology, intelligence, evaluation, domains, audit, documents, simulation
 from app.api.routes import simulation_exec, simulation_report, simulation_dialogue
+from app.api.routes import auth
 from app.visualization.routes import router as viz_router
 from app.config import Settings, get_settings
 from app.domain.schemas import HealthResponse
@@ -151,6 +152,7 @@ def create_app() -> FastAPI:
         return RedirectResponse(url="/viz/", status_code=302)
 
     # Mount routes
+    app.include_router(auth.router, prefix="/api/v1")
     app.include_router(ingest.router, prefix="/api/v1")
     app.include_router(query.router, prefix="/api/v1")
     app.include_router(metadata.router, prefix="/api/v1")
