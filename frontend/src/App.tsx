@@ -17,6 +17,7 @@ import { DocumentDetail } from './pages/DocumentDetail'
 import { SimulationExecution } from './pages/SimulationExecution'
 import { SimulationReports } from './pages/SimulationReports'
 import { SimulationDialogue } from './pages/SimulationDialogue'
+import PipelineConfig from './pages/PipelineConfig'
 
 function App() {
   return (
@@ -34,6 +35,7 @@ function App() {
         <Route path="review" element={<ReviewQueue />} />
         <Route path="explorations" element={<Explorations />} />
         <Route path="evaluation" element={<EvaluationDashboard />} />
+        <Route path="pipeline" element={<PipelineConfig />} />
         <Route path="graph" element={<GraphViz />} />
         <Route path="simulation" element={<SimulationExecution />} />
         <Route path="simulation/reports" element={<SimulationReports />} />
