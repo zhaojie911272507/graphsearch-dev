@@ -8,7 +8,8 @@ import { ScrollArea } from '@/components/ui/ScrollArea'
 import { Badge } from '@/components/ui/Badge'
 import { EntityExtractPanel } from '@/components/EntityExtractPanel'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/Dialog'
-import { X, Maximize, Minimize, Eye, EyeOff, ChevronRight, FolderOpen, Clock, Tag, Key, FileText, Sigma, Sparkles } from 'lucide-react'
+import { X, Maximize, Minimize, Eye, EyeOff, ChevronRight, FolderOpen, Clock, Tag, Key, FileText, Sigma, Sparkles, Layers } from 'lucide-react'
+import CytoscapeGraph from '@/components/CytoscapeGraph'
 
 interface GraphNode {
   id: string
@@ -96,6 +97,7 @@ export function GraphViz() {
   const [isMaximized, setIsMaximized] = useState(false)
   const [showEntityExtract, setShowEntityExtract] = useState(false)
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 })
+  const [viewMode, setViewMode] = useState<'d3' | 'cytoscape'>('cytoscape')  // Default to Cytoscape
 
   const { data, isLoading } = useQuery({
     queryKey: ['graphViz'],
@@ -441,6 +443,27 @@ export function GraphViz() {
           <p className="text-muted-foreground mt-1">交互式知识图谱可视化 (MiroFish 风格)</p>
         </div>
         <div className="flex items-center gap-2">
+          {/* View Mode Toggle */}
+          <div className="flex items-center border rounded-md">
+            <Button
+              variant={viewMode === 'd3' ? 'default' : 'ghost'}
+              size="sm"
+              onClick={() => setViewMode('d3')}
+              className="rounded-r-none"
+            >
+              D3
+            </Button>
+            <Button
+              variant={viewMode === 'cytoscape' ? 'default' : 'ghost'}
+              size="sm"
+              onClick={() => setViewMode('cytoscape')}
+              className="rounded-l-none"
+            >
+              <Layers className="h-4 w-4 mr-1" />
+              Cytoscape
+            </Button>
+          </div>
+
           <Button variant="outline" size="sm" onClick={() => setShowEntityExtract(!showEntityExtract)}>
             <Sparkles className="h-4 w-4 mr-2" />
             本体抽取
@@ -460,12 +483,29 @@ export function GraphViz() {
         <div className={`flex-1 ${selectedNode || selectedEdge ? 'flex-[2]' : 'flex-1'} transition-all duration-300`}>
           <Card className="overflow-hidden h-full">
             <CardContent className="p-0 relative h-full">
-              <div
-                ref={containerRef}
-                className="relative h-full"
-                style={{ minHeight: isMaximized ? 'unset' : '600px' }}
-              >
-                <svg ref={svgRef} width="100%" height="100%" className="bg-muted/30" />
+              {viewMode === 'cytoscape' ? (
+                // Cytoscape View
+                <div className="h-full" style={{ minHeight: isMaximized ? 'unset' : '600px' }}>
+                  <CytoscapeGraph
+                    onNodeSelect={(node) => {
+                      setSelectedNode({
+                        id: node.id,
+                        label: node.label,
+                        type: node.type,
+                        name: node.name,
+                        quality_score: node.quality_score,
+                      })
+                    }}
+                  />
+                </div>
+              ) : (
+                // D3 View
+                <div
+                  ref={containerRef}
+                  className="relative h-full"
+                  style={{ minHeight: isMaximized ? 'unset' : '600px' }}
+                >
+                  <svg ref={svgRef} width="100%" height="100%" className="bg-muted/30" />
 
                 {/* Entity Type Legend - MiroFish Style */}
                 <div className="absolute top-4 left-4 bg-card/95 backdrop-blur-sm border border-border rounded-xl p-3 shadow-xl max-h-48 overflow-y-auto">
@@ -759,6 +799,7 @@ export function GraphViz() {
                   </div>
                 )}
               </div>
+              )}  {/* Close the ternary - D3 view ends */}
             </CardContent>
           </Card>
         </div>
