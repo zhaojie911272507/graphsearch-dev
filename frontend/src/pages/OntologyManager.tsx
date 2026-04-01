@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/Badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/Dialog'
 import { ScrollArea } from '@/components/ui/ScrollArea'
+import { Input } from '@/components/ui/Input'
 import { useToast } from '@/contexts/ToastContext'
 import {
   GitBranch,
@@ -19,6 +20,12 @@ import {
   X,
   Brain,
   ArrowRight,
+  History,
+  GitCompare,
+  ArrowLeftRight,
+  Plus,
+  Clock,
+  User,
 } from 'lucide-react'
 
 interface EntityType {
@@ -65,6 +72,16 @@ export function OntologyManager() {
   const [selectedEntityTypes, setSelectedEntityTypes] = useState<Set<string>>(new Set())
   const [selectedRelationTypes, setSelectedRelationTypes] = useState<Set<string>>(new Set())
 
+  // Version management state
+  const [selectedVersion, setSelectedVersion] = useState<string | null>(null)
+  const [compareVersion, setCompareVersion] = useState<string | null>(null)
+  const [showCreateVersionDialog, setShowCreateVersionDialog] = useState(false)
+  const [showRollbackDialog, setShowRollbackDialog] = useState(false)
+  const [rollbackVersion, setRollbackVersion] = useState<string | null>(null)
+  const [versionViewMode, setVersionViewMode] = useState<'timeline' | 'compare'>('timeline')
+  const [newVersionName, setNewVersionName] = useState('')
+  const [newVersionSummary, setNewVersionSummary] = useState('')
+
   const queryClient = useQueryClient()
   const { toast } = useToast()
 
@@ -76,6 +93,53 @@ export function OntologyManager() {
   const { data: relationTypes, isLoading: relationTypesLoading } = useQuery({
     queryKey: ['relationTypes'],
     queryFn: () => ontologyApi.getRelationTypes(true, true).then(res => res.data),
+  })
+
+  // Version history query
+  const { data: versions, isLoading: versionsLoading, refetch: refetchVersions } = useQuery({
+    queryKey: ['ontologyVersions'],
+    queryFn: () => ontologyApi.getVersions(50).then(res => res.data),
+  })
+
+  // Version diff query
+  const { data: versionDiff, isLoading: diffLoading } = useQuery({
+    queryKey: ['ontologyVersionDiff', selectedVersion, compareVersion],
+    queryFn: () => {
+      if (!selectedVersion) return Promise.resolve(null)
+      return ontologyApi.getOntologyDiff(selectedVersion, compareVersion || undefined).then(res => res.data)
+    },
+    enabled: !!selectedVersion,
+  })
+
+  // Create version mutation
+  const createVersionMutation = useMutation({
+    mutationFn: (data: { version: string; change_summary: string; changes: string[] }) =>
+      ontologyApi.createVersion(data),
+    onSuccess: () => {
+      toast({ title: '版本创建成功', variant: 'default' })
+      setShowCreateVersionDialog(false)
+      setNewVersionName('')
+      setNewVersionSummary('')
+      refetchVersions()
+    },
+    onError: () => {
+      toast({ title: '版本创建失败', variant: 'destructive' })
+    },
+  })
+
+  // Rollback mutation
+  const rollbackMutation = useMutation({
+    mutationFn: (version: string) => ontologyApi.rollbackOntology(version),
+    onSuccess: () => {
+      toast({ title: `已回滚到版本 ${rollbackVersion}`, variant: 'default' })
+      setShowRollbackDialog(false)
+      setRollbackVersion(null)
+      refetchVersions()
+      refetch()
+    },
+    onError: () => {
+      toast({ title: '回滚失败', variant: 'destructive' })
+    },
   })
 
   // AI Recommendation mutation
@@ -348,11 +412,336 @@ export function OntologyManager() {
         </TabsContent>
 
         <TabsContent value="versions" className="space-y-4">
-          <Card>
-            <CardContent className="py-12 text-center text-muted-foreground">
-              版本历史功能开发中...
-            </CardContent>
-          </Card>
+          {/* Version Header */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <TabsList>
+                <TabsTrigger
+                  value="timeline"
+                  onClick={() => setVersionViewMode('timeline')}
+                >
+                  <Clock className="h-4 w-4 mr-1" />
+                  时间线
+                </TabsTrigger>
+                <TabsTrigger
+                  value="compare"
+                  onClick={() => setVersionViewMode('compare')}
+                >
+                  <GitCompare className="h-4 w-4 mr-1" />
+                  对比
+                </TabsTrigger>
+              </TabsList>
+            </div>
+            <Button onClick={() => setShowCreateVersionDialog(true)}>
+              <Plus className="h-4 w-4 mr-2" />
+              创建版本
+            </Button>
+          </div>
+
+          {versionsLoading ? (
+            <div className="flex items-center justify-center py-12">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+            </div>
+          ) : !versions || versions.length === 0 ? (
+            <Card>
+              <CardContent className="flex flex-col items-center justify-center py-12">
+                <History className="h-16 w-16 text-muted-foreground mb-4" />
+                <h3 className="text-lg font-semibold mb-2">暂无版本历史</h3>
+                <p className="text-muted-foreground text-center mb-4">
+                  创建第一个本体版本以记录变更历史
+                </p>
+                <Button onClick={() => setShowCreateVersionDialog(true)}>
+                  <Plus className="h-4 w-4 mr-2" />
+                  创建版本
+                </Button>
+              </CardContent>
+            </Card>
+          ) : versionViewMode === 'timeline' ? (
+            // Timeline View
+            <div className="space-y-4">
+              {versions.map((version: any, index: number) => (
+                <Card key={version.version} className={version.is_active ? 'border-primary' : ''}>
+                  <CardHeader>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Tag className="h-5 w-5 text-primary" />
+                        <CardTitle className="text-lg">{version.version}</CardTitle>
+                        {version.is_active && (
+                          <Badge variant="default">当前活跃</Badge>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            setSelectedVersion(version.version)
+                            setCompareVersion(versions[index + 1]?.version || null)
+                            setVersionViewMode('compare')
+                          }}
+                        >
+                          <GitCompare className="h-4 w-4 mr-1" />
+                          对比
+                        </Button>
+                        {!version.is_active && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              setRollbackVersion(version.version)
+                              setShowRollbackDialog(true)
+                            }}
+                          >
+                            <RotateCw className="h-4 w-4 mr-1" />
+                            回滚
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                    <CardDescription>{version.change_summary}</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="flex items-center justify-between text-sm text-muted-foreground">
+                      <div className="flex items-center gap-1">
+                        <User className="h-4 w-4" />
+                        {version.created_by}
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <Clock className="h-4 w-4" />
+                        {new Date(version.created_at).toLocaleString('zh-CN')}
+                      </div>
+                    </div>
+                    {version.changes && version.changes.length > 0 && (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {version.changes.map((change: string, idx: number) => (
+                          <Badge key={idx} variant="outline">{change}</Badge>
+                        ))}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          ) : (
+            // Compare View
+            <div className="space-y-4">
+              {/* Version Selection */}
+              <Card>
+                <CardContent className="py-4">
+                  <div className="flex items-center gap-4">
+                    <div className="flex-1">
+                      <label className="text-sm text-muted-foreground mb-1 block">比较版本</label>
+                      <select
+                        className="w-full border rounded px-3 py-2"
+                        value={selectedVersion || ''}
+                        onChange={(e) => setSelectedVersion(e.target.value)}
+                      >
+                        <option value="">选择版本...</option>
+                        {versions.map((v: any) => (
+                          <option key={v.version} value={v.version}>{v.version}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <ArrowLeftRight className="h-5 w-5 mt-6" />
+                    <div className="flex-1">
+                      <label className="text-sm text-muted-foreground mb-1 block">对比版本</label>
+                      <select
+                        className="w-full border rounded px-3 py-2"
+                        value={compareVersion || ''}
+                        onChange={(e) => setCompareVersion(e.target.value)}
+                      >
+                        <option value="">选择版本...</option>
+                        {versions.map((v: any) => (
+                          <option key={v.version} value={v.version}>{v.version}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Diff Results */}
+              {diffLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary"></div>
+                </div>
+              ) : versionDiff ? (
+                <Card>
+                  <CardHeader>
+                    <CardTitle>版本对比结果</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-4">
+                      {/* Added Entity Types */}
+                      {versionDiff.added_entity_types && versionDiff.added_entity_types.length > 0 && (
+                        <div>
+                          <h4 className="text-sm font-medium text-green-600 mb-2">新增实体类型</h4>
+                          <div className="flex flex-wrap gap-2">
+                            {versionDiff.added_entity_types.map((type: string) => (
+                              <Badge key={type} className="bg-green-100 text-green-800">{type}</Badge>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Removed Entity Types */}
+                      {versionDiff.removed_entity_types && versionDiff.removed_entity_types.length > 0 && (
+                        <div>
+                          <h4 className="text-sm font-medium text-red-600 mb-2">删除实体类型</h4>
+                          <div className="flex flex-wrap gap-2">
+                            {versionDiff.removed_entity_types.map((type: string) => (
+                              <Badge key={type} className="bg-red-100 text-red-800">{type}</Badge>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Modified Entity Types */}
+                      {versionDiff.modified_entity_types && versionDiff.modified_entity_types.length > 0 && (
+                        <div>
+                          <h4 className="text-sm font-medium text-yellow-600 mb-2">修改实体类型</h4>
+                          <div className="flex flex-wrap gap-2">
+                            {versionDiff.modified_entity_types.map((type: string) => (
+                              <Badge key={type} className="bg-yellow-100 text-yellow-800">{type}</Badge>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Added Relation Types */}
+                      {versionDiff.added_relation_types && versionDiff.added_relation_types.length > 0 && (
+                        <div>
+                          <h4 className="text-sm font-medium text-green-600 mb-2">新增关系类型</h4>
+                          <div className="flex flex-wrap gap-2">
+                            {versionDiff.added_relation_types.map((type: string) => (
+                              <Badge key={type} className="bg-green-100 text-green-800">{type}</Badge>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Removed Relation Types */}
+                      {versionDiff.removed_relation_types && versionDiff.removed_relation_types.length > 0 && (
+                        <div>
+                          <h4 className="text-sm font-medium text-red-600 mb-2">删除关系类型</h4>
+                          <div className="flex flex-wrap gap-2">
+                            {versionDiff.removed_relation_types.map((type: string) => (
+                              <Badge key={type} className="bg-red-100 text-red-800">{type}</Badge>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Modified Relation Types */}
+                      {versionDiff.modified_relation_types && versionDiff.modified_relation_types.length > 0 && (
+                        <div>
+                          <h4 className="text-sm font-medium text-yellow-600 mb-2">修改关系类型</h4>
+                          <div className="flex flex-wrap gap-2">
+                            {versionDiff.modified_relation_types.map((type: string) => (
+                              <Badge key={type} className="bg-yellow-100 text-yellow-800">{type}</Badge>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* No changes */}
+                      {(!versionDiff.added_entity_types?.length) &&
+                       (!versionDiff.removed_entity_types?.length) &&
+                       (!versionDiff.modified_entity_types?.length) &&
+                       (!versionDiff.added_relation_types?.length) &&
+                       (!versionDiff.removed_relation_types?.length) &&
+                       (!versionDiff.modified_relation_types?.length) && (
+                        <p className="text-muted-foreground text-center py-4">两个版本之间没有差异</p>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              ) : selectedVersion ? (
+                <Card>
+                  <CardContent className="py-8 text-center text-muted-foreground">
+                    选择要对比的版本查看差异
+                  </CardContent>
+                </Card>
+              ) : null}
+            </div>
+          )}
+
+          {/* Create Version Dialog */}
+          <Dialog open={showCreateVersionDialog} onOpenChange={setShowCreateVersionDialog}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>创建本体版本</DialogTitle>
+                <DialogDescription>
+                  创建一个新的本体版本快照，记录当前状态
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4">
+                <div>
+                  <label className="text-sm font-medium">版本号</label>
+                  <Input
+                    placeholder="例如: v1.0.0"
+                    value={newVersionName}
+                    onChange={(e) => setNewVersionName(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-medium">变更摘要</label>
+                  <Input
+                    placeholder="描述本次变更的内容"
+                    value={newVersionSummary}
+                    onChange={(e) => setNewVersionSummary(e.target.value)}
+                  />
+                </div>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setShowCreateVersionDialog(false)}>
+                  取消
+                </Button>
+                <Button
+                  onClick={() => {
+                    if (newVersionName && newVersionSummary) {
+                      createVersionMutation.mutate({
+                        version: newVersionName,
+                        change_summary: newVersionSummary,
+                        changes: newVersionSummary.split(',').map(s => s.trim()).filter(Boolean),
+                      })
+                    }
+                  }}
+                  disabled={!newVersionName || !newVersionSummary || createVersionMutation.isPending}
+                >
+                  {createVersionMutation.isPending ? '创建中...' : '创建'}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          {/* Rollback Confirmation Dialog */}
+          <Dialog open={showRollbackDialog} onOpenChange={setShowRollbackDialog}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>确认回滚</DialogTitle>
+                <DialogDescription>
+                  确定要回滚到版本 {rollbackVersion} 吗？此操作将记录到审计日志。
+                </DialogDescription>
+              </DialogHeader>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setShowRollbackDialog(false)}>
+                  取消
+                </Button>
+                <Button
+                  variant="destructive"
+                  onClick={() => {
+                    if (rollbackVersion) {
+                      rollbackMutation.mutate(rollbackVersion)
+                    }
+                  }}
+                  disabled={rollbackMutation.isPending}
+                >
+                  {rollbackMutation.isPending ? '回滚中...' : '确认回滚'}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </TabsContent>
       </Tabs>
 
