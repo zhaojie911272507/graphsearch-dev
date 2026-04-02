@@ -14,6 +14,8 @@ class NodeType(StrEnum):
     CHUNK = "Chunk"
     ENTITY = "Entity"
     CONCEPT = "Concept"
+    ENTITY_VERSION = "EntityVersion"
+    RELATIONSHIP_SNAPSHOT = "RelationshipSnapshot"
 
 
 class EntityType(StrEnum):

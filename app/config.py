@@ -144,6 +144,16 @@ class SimulationSettings(BaseSettings):
     enable_relationship_evolution: bool = Field(default=True)
 
 
+class TemporalSettings(BaseSettings):
+    """Temporal knowledge graph configuration."""
+
+    model_config = SettingsConfigDict(env_prefix="TEMPORAL_", env_file=".env", extra="ignore")
+
+    batch_interval_minutes: int = Field(default=5, ge=1, le=60)
+    version_threshold: int = Field(default=1, ge=1, description="Changes >= N create new version")
+    summary_enabled: bool = Field(default=True)
+
+
 class Settings(BaseSettings):
     """Aggregated application settings — single source of truth."""
 
@@ -158,6 +168,7 @@ class Settings(BaseSettings):
     retry: RetrySettings = Field(default_factory=RetrySettings)
     simulation: SimulationSettings = Field(default_factory=SimulationSettings)
     observability: ObservabilitySettings = Field(default_factory=ObservabilitySettings)
+    temporal: TemporalSettings = Field(default_factory=TemporalSettings)
 
 
 def get_settings() -> Settings:

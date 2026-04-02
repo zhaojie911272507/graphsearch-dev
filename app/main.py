@@ -17,7 +17,7 @@ from fastapi.responses import RedirectResponse
 from app.api.routes import ingest, query
 from app.api.routes import metadata, ontology, intelligence, evaluation, domains, audit, documents, simulation
 from app.api.routes import simulation_exec, simulation_report, simulation_dialogue
-from app.api.routes import auth
+from app.api.routes import auth, temporal
 from app.visualization.routes import router as viz_router
 from app.config import Settings, get_settings
 from app.observability.metrics import MetricsRegistry
@@ -27,6 +27,11 @@ from app.domain.schemas import HealthResponse
 from app.embedding.service import EmbeddingService
 from app.extraction.extractor import GraphExtractor
 from app.persistence.graph_store import GraphStore
+from app.persistence.temporal_store import TemporalStore
+from app.services.temporal_knowledge.version_manager import VersionManager
+from app.services.temporal_knowledge.summary_generator import SummaryGenerator
+from app.services.temporal_knowledge.batch_merger import BatchMerger
+from app.api.routes.temporal import set_temporal_services
 
 logger = structlog.get_logger(__name__)
 
@@ -98,6 +103,49 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         extraction_settings=settings.extraction,
     )
 
+    # Temporal services
+    temporal_store = None
+    version_manager = None
+    summary_generator = None
+    batch_merger = None
+
+    if graph_store._driver:
+        try:
+            # Create temporal store
+            temporal_store = TemporalStore(graph_store._driver)
+            await temporal_store.create_indexes()
+
+            # Create version manager
+            version_manager = VersionManager(temporal_store)
+
+            # Create summary generator
+            summary_generator = SummaryGenerator(
+                openai_settings=settings.openai,
+                temporal_settings=settings.temporal,
+            )
+            summary_generator.set_version_manager(version_manager)
+            summary_generator.set_temporal_store(temporal_store)
+
+            # Create batch merger and start scheduler
+            batch_merger = BatchMerger(
+                temporal_settings=settings.temporal,
+                version_manager=version_manager,
+                summary_generator=summary_generator,
+            )
+            await batch_merger.start()
+
+            # Set global services for API routes
+            set_temporal_services(
+                temporal_store=temporal_store,
+                version_manager=version_manager,
+                summary_generator=summary_generator,
+                batch_merger=batch_merger,
+            )
+
+            await log.ainfo("Temporal services initialized")
+        except Exception as exc:
+            await log.awarning("Temporal services failed to initialize", error=str(exc))
+
     # Store in app state for dependency injection
     app.state.settings = settings
     app.state.embedding_service = embedding_service
@@ -110,6 +158,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Shutdown
     await log.ainfo("Shutting down Graph RAG system")
+
+    # Stop batch merger
+    if batch_merger:
+        await batch_merger.stop()
+
     await graph_store.__aexit__(None, None, None)
     EmbeddingService.reset()
     await log.ainfo("Shutdown complete")
@@ -158,6 +211,7 @@ def create_app() -> FastAPI:
     app.include_router(simulation_exec.router, prefix="/api/v1")
     app.include_router(simulation_report.router, prefix="/api/v1")
     app.include_router(simulation_dialogue.router, prefix="/api/v1")
+    app.include_router(temporal.router, prefix="/api/v1")
     app.include_router(viz_router)
 
     # Health endpoint
