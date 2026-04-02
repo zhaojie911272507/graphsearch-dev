@@ -70,7 +70,7 @@ export function DomainManager() {
         <div>
           <h1 className="text-3xl font-bold">领域管理</h1>
           <p className="text-muted-foreground mt-1">
-            管理领域定义、配置和本体 Schema
+            管理领域命名空间隔离（实体和关系类型由本体管理）
           </p>
         </div>
         <Button onClick={() => setShowCreateForm(!showCreateForm)}>
@@ -147,7 +147,6 @@ function CreateDomainForm({ onSubmit }: { onSubmit: (data: any) => void }) {
     domain_key: '',
     name: '',
     description: '',
-    extraction_prompt_template: '',
     parent_domain_key: '',
     inherits_base_ontology: true,
   })
@@ -164,7 +163,9 @@ function CreateDomainForm({ onSubmit }: { onSubmit: (data: any) => void }) {
     <Card>
       <CardHeader>
         <CardTitle>创建新领域</CardTitle>
-        <CardDescription>定义领域的基本信息和配置</CardDescription>
+        <CardDescription>
+          领域作为命名空间隔离层，实体和关系类型由本体管理
+        </CardDescription>
       </CardHeader>
       <CardContent>
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -201,19 +202,8 @@ function CreateDomainForm({ onSubmit }: { onSubmit: (data: any) => void }) {
               id="description"
               value={formData.description}
               onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-              placeholder="医疗研究领域的本体定义和提取规则..."
+              placeholder="医疗研究领域的命名空间配置..."
               rows={3}
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="extraction_prompt_template">提取提示模板</Label>
-            <Textarea
-              id="extraction_prompt_template"
-              value={formData.extraction_prompt_template}
-              onChange={(e) => setFormData({ ...formData, extraction_prompt_template: e.target.value })}
-              placeholder="自定义的实体/关系提取提示模板..."
-              rows={5}
             />
           </div>
 
@@ -338,22 +328,13 @@ function DomainCard({
           <div className="grid grid-cols-2 gap-x-4">
             <div>
               <p className="text-sm font-medium text-muted-foreground">创建者</p>
-              <p className="text-sm">{domain.created_by}</p>
+              <p className="text-sm">{domain.metadata?.created_by || 'system'}</p>
             </div>
             <div>
               <p className="text-sm font-medium text-muted-foreground">版本</p>
-              <p className="text-sm">{domain.version}</p>
+              <p className="text-sm">{domain.metadata?.version || '1.0.0'}</p>
             </div>
           </div>
-
-          {domain.extraction_prompt_template && (
-            <div>
-              <p className="text-sm font-medium text-muted-foreground mb-1">提取提示模板</p>
-              <div className="text-xs bg-muted p-2 rounded max-h-32 overflow-auto">
-                {domain.extraction_prompt_template}
-              </div>
-            </div>
-          )}
 
           <div className="flex items-center gap-x-2">
             <Button

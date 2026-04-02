@@ -66,7 +66,9 @@
       "Bash(docker-compose logs:*)",
       "Bash(npx tsc:*)",
       "Bash(docker-compose build:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(find app:*)",
+      "WebFetch(domain:deepwiki.com)"
     ]
   },
   "enabledPlugins": {

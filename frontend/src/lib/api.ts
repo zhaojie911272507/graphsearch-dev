@@ -250,6 +250,8 @@ export const evaluationApi = {
 export const graphVizApi = {
   getGraph: (params?: { limit?: number }) =>
     api.get('/metadata/graph-viz', { params: { limit: params?.limit || 100 } }),
+  getNodeDetail: (nodeId: string) =>
+    api.get(`/metadata/nodes/${nodeId}`),
 }
 
 // Domain Management APIs
@@ -483,4 +485,14 @@ export const simulationDialogueApi = {
       message,
       conversation_history,
     }),
+}
+
+// Query APIs (Graph RAG)
+export const queryApi = {
+  query: (data: {
+    question: string
+    top_k?: number
+    traversal_depth?: number
+    include_sources?: boolean
+  }) => api.post('/query', data),
 }

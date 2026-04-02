@@ -1564,12 +1564,14 @@ class GraphStore:
         domain_key: str,
         name: str,
         description: str = "",
-        extraction_prompt_template: str = "",
         parent_domain_key: str | None = None,
         inherits_base_ontology: bool = True,
         created_by: str = "system",
     ) -> dict[str, object]:
-        """Create a new domain."""
+        """Create a new domain as namespace isolation.
+
+        Domain does not contain entity/relation types - those are managed globally via Ontology.
+        """
         import uuid
         from datetime import datetime
 
@@ -1583,16 +1585,13 @@ class GraphStore:
                 domain_key: $domain_key,
                 name: $name,
                 description: $description,
-                extraction_prompt_template: $extraction_prompt_template,
                 parent_domain_key: $parent_domain_key,
                 inherits_base_ontology: $inherits_base_ontology,
                 created_by: $created_by,
                 version: "1.0.0",
                 is_active: true,
                 created_at: $now,
-                updated_at: $now,
-                entity_types: [],
-                relation_types: []
+                updated_at: $now
             })
             RETURN d
             """
@@ -1604,7 +1603,6 @@ class GraphStore:
                     domain_key=domain_key,
                     name=name,
                     description=description,
-                    extraction_prompt_template=extraction_prompt_template,
                     parent_domain_key=parent_domain_key,
                     inherits_base_ontology=inherits_base_ontology,
                     created_by=created_by,
@@ -2502,8 +2500,14 @@ class GraphStore:
         visited_nodes: list[str],
         highlights: list[str],
         is_public: bool = False,
+        lineage_start_node_id: str | None = None,
+        lineage_direction: str | None = None,
+        lineage_depth: int | None = None,
     ) -> dict[str, object]:
-        """Create an exploration path."""
+        """Create an exploration path.
+
+        If lineage_start_node_id is provided, the path is built from lineage.
+        """
         import uuid
         from datetime import datetime
 
@@ -2523,6 +2527,9 @@ class GraphStore:
                 view_count: 0,
                 likes: 0,
                 is_public: $is_public,
+                lineage_start_node_id: $lineage_start_node_id,
+                lineage_direction: $lineage_direction,
+                lineage_depth: $lineage_depth,
                 created_at: $now,
                 updated_at: $now
             })
@@ -2540,6 +2547,9 @@ class GraphStore:
                     visited_nodes=visited_nodes,
                     highlights=highlights,
                     is_public=is_public,
+                    lineage_start_node_id=lineage_start_node_id,
+                    lineage_direction=lineage_direction,
+                    lineage_depth=lineage_depth,
                     now=now,
                 )
                 record = await result.single()

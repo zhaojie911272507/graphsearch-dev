@@ -46,7 +46,12 @@ class VoteResultSchema(BaseModel):
 
 
 class ExplorationPathSchema(BaseModel):
-    """Saved exploration path."""
+    """Saved exploration path.
+
+    Can be either:
+    1. Manual path: user manually recorded visited_nodes
+    2. Lineage-based: automatically generated from lineage tracing
+    """
 
     id: UUID
     user_id: str
@@ -55,6 +60,12 @@ class ExplorationPathSchema(BaseModel):
     start_node_id: UUID
     visited_nodes: list[UUID] = Field(default_factory=list, description="Node IDs in visit order")
     highlights: list[UUID] = Field(default_factory=list, description="Highlighted node IDs")
+
+    # Lineage-based fields (optional)
+    lineage_start_node_id: UUID | None = Field(default=None, description="Root node for lineage tracing")
+    lineage_direction: str | None = Field(default=None, description="upstream, downstream, or both")
+    lineage_depth: int | None = Field(default=None, description="Lineage traversal depth")
+
     view_count: int = Field(default=0)
     likes: int = Field(default=0)
     is_public: bool = Field(default=False)
@@ -63,13 +74,25 @@ class ExplorationPathSchema(BaseModel):
 
 
 class ExplorationPathCreateSchema(BaseModel):
-    """Request to save an exploration path."""
+    """Request to save an exploration path.
+
+    If lineage_start_node_id is provided, the exploration will be
+    automatically built from lineage tracing.
+    """
 
     title: str = Field(..., max_length=200)
     description: str = Field(default="", max_length=1000)
     start_node_id: UUID
+
+    # Manual path
     visited_nodes: list[UUID] = Field(default_factory=list)
     highlights: list[UUID] = Field(default_factory=list)
+
+    # Lineage-based (optional)
+    lineage_start_node_id: UUID | None = Field(default=None, description="Build from lineage tracing")
+    lineage_direction: str | None = Field(default="both", description="upstream, downstream, or both")
+    lineage_depth: int | None = Field(default=None, ge=1, le=10, description="Lineage depth")
+
     is_public: bool = Field(default=False)
 
 

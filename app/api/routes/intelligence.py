@@ -13,7 +13,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
 
-from app.api.dependencies import GraphStoreDep
+from app.api.dependencies import GraphStoreDep, SettingsDep
 from app.api.schemas.intelligence import (
     AnnotationSummarySchema,
     ExplorationPathCreateSchema,
@@ -26,6 +26,8 @@ from app.api.schemas.intelligence import (
     VoteCreateSchema,
     VoteResultSchema,
 )
+from app.config import get_settings
+from app.services.lineage_analyzer import LineageAnalyzer
 
 logger = logging.getLogger(__name__)
 
@@ -216,17 +218,80 @@ async def get_exploration(
 async def create_exploration(
     exploration: ExplorationPathCreateSchema,
     store: GraphStoreDep,
+    settings: SettingsDep,
 ) -> ExplorationPathSchema:
-    """Save a new exploration path."""
+    """Save a new exploration path.
+
+    If lineage_start_node_id is provided, the path is automatically
+    built from lineage tracing and AI will analyze the path to generate
+    meaningful title, description, and highlight suggestions.
+    """
     try:
+        # If lineage_start_node_id provided, fetch lineage path
+        lineage_nodes = []
+        lineage_edges = []
+        ai_analysis = None
+
+        if exploration.lineage_start_node_id:
+            lineage_data = await store.get_node_lineage(
+                str(exploration.lineage_start_node_id),
+                direction=exploration.lineage_direction or "both",
+                max_depth=exploration.lineage_depth,
+            )
+
+            # Collect all nodes and edges from lineage
+            lineage_nodes = lineage_data.get("nodes", [])
+            lineage_edges = lineage_data.get("edges", [])
+            node_ids = [n["id"] for n in lineage_nodes]
+
+            # Use AI to analyze the lineage path and generate metadata
+            if lineage_nodes:
+                try:
+                    settings = get_settings()
+                    analyzer = LineageAnalyzer(settings.openai)
+
+                    # Get start node info
+                    start_node = await store.get_node_by_id(str(exploration.lineage_start_node_id))
+                    if not start_node:
+                        start_node = {"name": "Unknown", "node_type": "Unknown"}
+
+                    # Analyze with AI
+                    ai_analysis = await analyzer.analyze(
+                        start_node=start_node,
+                        lineage_nodes=lineage_nodes,
+                        lineage_edges=lineage_edges,
+                    )
+
+                    logger.info(f"AI analysis complete: {ai_analysis.title}")
+                except Exception as e:
+                    logger.warning(f"AI analysis failed, using manual input: {e}")
+
+        # Use AI-generated or manual title/description
+        final_title = exploration.title
+        final_description = exploration.description
+        final_highlights = [str(h) for h in exploration.highlights]
+
+        if ai_analysis:
+            # Override with AI-generated content if not provided
+            if not final_title or final_title == "New Exploration":
+                final_title = ai_analysis.title
+            if not final_description:
+                final_description = ai_analysis.description
+            # Add AI-recommended highlights if none provided
+            if not final_highlights:
+                final_highlights = ai_analysis.recommended_highlights
+
         created = await store.create_exploration_path(
             user_id="current_user",
-            title=exploration.title,
-            description=exploration.description,
+            title=final_title,
+            description=final_description,
             start_node_id=str(exploration.start_node_id),
-            visited_nodes=[str(n) for n in exploration.visited_nodes],
-            highlights=[str(h) for h in exploration.highlights],
+            visited_nodes=[str(n) for n in exploration.visited_nodes] if lineage_nodes else node_ids if lineage_nodes else [str(n) for n in exploration.visited_nodes],
+            highlights=final_highlights,
             is_public=exploration.is_public,
+            lineage_start_node_id=str(exploration.lineage_start_node_id) if exploration.lineage_start_node_id else None,
+            lineage_direction=exploration.lineage_direction,
+            lineage_depth=exploration.lineage_depth,
         )
 
         return ExplorationPathSchema(
@@ -237,6 +302,9 @@ async def create_exploration(
             start_node_id=UUID(created["start_node_id"]),
             visited_nodes=[UUID(n) for n in created.get("visited_nodes", [])],
             highlights=[UUID(h) for h in created.get("highlights", [])],
+            lineage_start_node_id=UUID(created["lineage_start_node_id"]) if created.get("lineage_start_node_id") else None,
+            lineage_direction=created.get("lineage_direction"),
+            lineage_depth=created.get("lineage_depth"),
             view_count=0,
             likes=0,
             is_public=created.get("is_public", False),

@@ -7,6 +7,7 @@ import { ReviewQueue } from './pages/ReviewQueue'
 import { Explorations } from './pages/Explorations'
 import { EvaluationDashboard } from './pages/EvaluationDashboard'
 import { GraphViz } from './pages/GraphViz'
+import { GraphQuery } from './pages/GraphQuery'
 import LineageTracking from './pages/LineageTracking'
 import { SettingsPage } from './pages/SettingsPage'
 import { LineageIndex } from './pages/LineageIndex'
@@ -55,6 +56,7 @@ function App() {
         <Route path="evaluation" element={<EvaluationDashboard />} />
         <Route path="pipeline" element={<PipelineConfig />} />
         <Route path="graph" element={<GraphViz />} />
+        <Route path="graph/query" element={<GraphQuery />} />
         <Route path="simulation" element={<SimulationExecution />} />
         <Route path="simulation/reports" element={<SimulationReports />} />
         <Route path="simulation/dialogue" element={<SimulationDialogue />} />

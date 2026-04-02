@@ -115,6 +115,8 @@ class ChunkNode(BaseNode):
     paragraph_type: str = Field(default="paragraph", description="Type: paragraph/list/code/table/header")
     word_count: int = Field(default=0, description="Number of words in chunk")
     sentence_count: int = Field(default=0, description="Number of sentences in chunk")
+    token_count: int = Field(default=0, description="Number of tokens in chunk")
+    chunk_strategy: str = Field(default="fixed", description="Chunking strategy used: fixed/recursive")
     semantic_boundary_start: bool = Field(default=True, description="Whether chunk starts at semantic boundary")
     semantic_boundary_end: bool = Field(default=True, description="Whether chunk ends at semantic boundary")
     previous_chunk_overlap: str = Field(default="", description="Text overlap from previous chunk")
@@ -144,6 +146,8 @@ class ChunkNode(BaseNode):
                 "paragraph_type": self.paragraph_type,
                 "word_count": self.word_count,
                 "sentence_count": self.sentence_count,
+                "token_count": self.token_count,
+                "chunk_strategy": self.chunk_strategy,
                 "semantic_boundary_start": self.semantic_boundary_start,
                 "semantic_boundary_end": self.semantic_boundary_end,
                 "previous_chunk_overlap": self.previous_chunk_overlap,

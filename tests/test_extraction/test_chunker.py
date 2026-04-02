@@ -19,8 +19,9 @@ class TestTextChunker:
         settings = ExtractionSettings(
             max_concurrency=5,
             max_retries=2,
-            chunk_size=100,
-            chunk_overlap=20,
+            chunk_strategy="fixed",
+            chunk_token_size=64,  # Target token size
+            chunk_overlap=16,
         )
         return TextChunker(settings)
 
@@ -57,8 +58,9 @@ class TestTextChunker:
         settings = ExtractionSettings(
             max_concurrency=5,
             max_retries=2,
-            chunk_size=100,  # Minimum allowed is 64
-            chunk_overlap=20,
+            chunk_strategy="fixed",
+            chunk_token_size=64,
+            chunk_overlap=16,
         )
         chunker = TextChunker(settings)
         doc_id = uuid4()

@@ -15,6 +15,8 @@ import {
   LineChart,
   MessageSquare,
   Play,
+  Gauge,
+  Search,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -32,6 +34,7 @@ const mainNav: NavItem[] = [
   { name: '资产目录', href: '/assets', icon: Database },
   { name: '文档管理', href: '/documents', icon: FileText },
   { name: '图谱可视化', href: '/graph', icon: Network },
+  { name: '图谱问答', href: '/graph/query', icon: Search },
 ]
 
 // 领域与本体
@@ -53,6 +56,7 @@ const collaborationNav: NavItem[] = [
   { name: '协作审核', href: '/review', icon: Users },
   { name: '探索路径', href: '/explorations', icon: Map },
   { name: '评估监控', href: '/evaluation', icon: BarChart3 },
+  { name: '管道配置', href: '/pipeline', icon: Gauge },
   { name: '系统设置', href: '/settings', icon: Settings },
 ]
 

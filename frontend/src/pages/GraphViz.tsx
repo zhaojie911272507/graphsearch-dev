@@ -8,7 +8,7 @@ import { ScrollArea } from '@/components/ui/ScrollArea'
 import { Badge } from '@/components/ui/Badge'
 import { EntityExtractPanel } from '@/components/EntityExtractPanel'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/Dialog'
-import { X, Maximize, Minimize, Eye, EyeOff, ChevronRight, FolderOpen, Clock, Tag, Key, FileText, Sigma, Sparkles, Layers } from 'lucide-react'
+import { X, Maximize, Minimize, Eye, EyeOff, ChevronRight, FolderOpen, Clock, Tag, Key, FileText, Sigma, Sparkles, Layers, GitBranch, ArrowDownLeft, ArrowUpRight } from 'lucide-react'
 import CytoscapeGraph from '@/components/CytoscapeGraph'
 
 interface GraphNode {
@@ -98,6 +98,17 @@ export function GraphViz() {
   const [showEntityExtract, setShowEntityExtract] = useState(false)
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 })
   const [viewMode, setViewMode] = useState<'d3' | 'cytoscape'>('cytoscape')  // Default to Cytoscape
+
+  // Query for node detail (with relations)
+  const { data: nodeDetail } = useQuery({
+    queryKey: ['nodeDetail', selectedNode?.id],
+    queryFn: async () => {
+      if (!selectedNode?.id) return null
+      const response = await graphVizApi.getNodeDetail(selectedNode.id)
+      return response.data
+    },
+    enabled: !!selectedNode?.id,
+  })
 
   const { data, isLoading } = useQuery({
     queryKey: ['graphViz'],
@@ -671,6 +682,69 @@ export function GraphViz() {
                                   </div>
                                 ))}
                               </div>
+                            </div>
+                          )}
+
+                          {/* Relations Card (from API) */}
+                          {nodeDetail && (nodeDetail.incoming_relations?.length > 0 || nodeDetail.outgoing_relations?.length > 0) && (
+                            <div className="space-y-3">
+                              <label className="text-xs text-muted-foreground font-medium flex items-center gap-1">
+                                <GitBranch className="h-3 w-3" />
+                                关系信息
+                              </label>
+
+                              {/* Incoming Relations */}
+                              {nodeDetail.incoming_relations && nodeDetail.incoming_relations.length > 0 && (
+                                <div className="space-y-2">
+                                  <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                                    <ArrowDownLeft className="h-3 w-3" />
+                                    入向关系 ({nodeDetail.incoming_relations.length})
+                                  </div>
+                                  <div className="space-y-1 max-h-[200px] overflow-y-auto">
+                                    {nodeDetail.incoming_relations.map((rel: any, idx: number) => (
+                                      <div
+                                        key={`in-${idx}`}
+                                        className="flex items-center gap-2 text-xs p-2 bg-muted/30 rounded hover:bg-muted/50 cursor-pointer"
+                                        onClick={() => {
+                                          // 可以添加点击跳转到对应节点的功能
+                                        }}
+                                      >
+                                        <span className="text-primary font-medium truncate flex-1">
+                                          {rel.other_node_name || rel.other_node_id}
+                                        </span>
+                                        <Badge variant="outline" className="text-[10px] shrink-0">
+                                          {rel.relation_type}
+                                        </Badge>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* Outgoing Relations */}
+                              {nodeDetail.outgoing_relations && nodeDetail.outgoing_relations.length > 0 && (
+                                <div className="space-y-2">
+                                  <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                                    <ArrowUpRight className="h-3 w-3" />
+                                    出向关系 ({nodeDetail.outgoing_relations.length})
+                                  </div>
+                                  <div className="space-y-1 max-h-[200px] overflow-y-auto">
+                                    {nodeDetail.outgoing_relations.map((rel: any, idx: number) => (
+                                      <div
+                                        key={`out-${idx}`}
+                                        className="flex items-center gap-2 text-xs p-2 bg-muted/30 rounded hover:bg-muted/50 cursor-pointer"
+                                      >
+                                        <span className="text-primary font-medium truncate flex-1">
+                                          {rel.other_node_name || rel.other_node_id}
+                                        </span>
+                                        <Badge variant="outline" className="text-[10px] shrink-0">
+                                          {rel.relation_type}
+                                        </Badge>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           )}
 

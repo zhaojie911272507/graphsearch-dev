@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import CytoscapeComponent from 'react-cytoscapejs'
-import { Core, LayoutOptions, EventObject } from 'cytoscape'
+import cytoscape, { Core, LayoutOptions, EventObject } from 'cytoscape'
+import cytoscapeDagre from 'cytoscape-dagre'
 import { useQuery } from '@tanstack/react-query'
 import { graphVizApi } from '@/lib/api'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card'
@@ -55,6 +56,9 @@ const getNodeColor = (type: string): string => {
   }
   return colors[type] || '#9ca3af'
 }
+
+// Register dagre extension
+cytoscapeDagre(cytoscape)
 
 interface CytoscapeGraphProps {
   layoutType?: LayoutType

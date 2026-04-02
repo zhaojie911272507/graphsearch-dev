@@ -16,3 +16,9 @@ declare module 'react-cytoscapejs' {
   const CytoscapeComponent: React.FC<ReactCytoscapeProps>
   export default CytoscapeComponent
 }
+
+declare module 'cytoscape-dagre' {
+  import cytoscape from 'cytoscape'
+  const cytoscapeDagre: (cytoscape: typeof cytoscape) => void
+  export default cytoscapeDagre
+}

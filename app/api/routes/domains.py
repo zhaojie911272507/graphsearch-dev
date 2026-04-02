@@ -3,8 +3,7 @@
 Provides endpoints for:
 - Domain CRUD operations
 - Domain activation and context switching
-- Domain-specific ontology management
-- Domain inheritance and versioning
+- Domain namespace isolation
 """
 
 import logging
@@ -18,7 +17,6 @@ from app.config import get_settings
 from app.api.schemas.domains import (
     DomainActivateResponse,
     DomainCreateSchema,
-    DomainDiffSchema,
     DomainInheritanceChainSchema,
     DomainSchema,
     DomainUpdateSchema,
@@ -48,15 +46,9 @@ def _domain_to_schema(domain_dict: dict[str, Any]) -> DomainSchema:
             "is_active": domain_dict.get("is_active", False),
         },
         config={
-            "extraction_prompt_template": domain_dict.get("extraction_prompt_template", ""),
-            "max_entity_types": domain_dict.get("max_entity_types", 50),
-            "max_relation_types": domain_dict.get("max_relation_types", 100),
-            "validation_rules": domain_dict.get("validation_rules", {}),
             "parent_domain_key": domain_dict.get("parent_domain_key"),
             "inherits_base_ontology": domain_dict.get("inherits_base_ontology", True),
         },
-        entity_types=domain_dict.get("entity_types", []),
-        relation_types=domain_dict.get("relation_types", []),
     )
 
 
@@ -105,7 +97,6 @@ async def create_domain(
             domain_key=domain.domain_key,
             name=domain.name,
             description=domain.description,
-            extraction_prompt_template=domain.extraction_prompt_template,
             parent_domain_key=domain.parent_domain_key,
             inherits_base_ontology=domain.inherits_base_ontology,
         )

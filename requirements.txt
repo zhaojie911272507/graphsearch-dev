@@ -40,6 +40,9 @@ pytest-cov>=6.0.0
 mypy>=1.14.0
 ruff>=0.8.0
 
+# Token counting
+tiktoken>=0.11.0
+
 # Document Parsing
 PyPDF2>=3.0.0
 python-docx>=1.1.0
@@ -48,3 +51,12 @@ fpdf2>=2.8.0
 
 # Auth
 PyJWT>=2.8.0
+
+# Observability (Monitoring & Tracing)
+prometheus-client>=0.19.0
+opentelemetry-api>=1.21.0
+opentelemetry-sdk>=1.21.0
+opentelemetry-exporter-otlp>=1.21.0
+opentelemetry-instrumentation-fastapi>=0.42b0
+opentelemetry-instrumentation-httpx>=0.42b0
+opentelemetry-instrumentation-asyncio>=0.42b0

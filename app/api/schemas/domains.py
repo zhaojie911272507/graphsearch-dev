@@ -18,18 +18,25 @@ class DomainMetadataSchema(BaseModel):
 
 
 class DomainConfigSchema(BaseModel):
-    """Domain configuration for API responses."""
+    """Domain configuration for API responses.
 
-    extraction_prompt_template: str = Field(default="")
-    max_entity_types: int = Field(default=50)
-    max_relation_types: int = Field(default=100)
-    validation_rules: dict[str, Any] = Field(default_factory=dict)
+    Domain acts as a namespace isolation layer. It does not contain
+    entity/relation types - those are managed globally via Ontology.
+    """
+
     parent_domain_key: str | None = Field(default=None)
-    inherits_base_ontology: bool = Field(default=True)
+    inherits_base_ontology: bool = Field(
+        default=True,
+        description="Whether to inherit built-in entity/relation types from base ontology",
+    )
 
 
 class DomainSchema(BaseModel):
-    """Domain definition for API responses."""
+    """Domain definition for API responses.
+
+    Domain is a namespace isolation layer for grouping assets.
+    Entity types and relation types are managed globally via Ontology API.
+    """
 
     id: UUID
     name: str
@@ -37,12 +44,14 @@ class DomainSchema(BaseModel):
     domain_key: str
     metadata: DomainMetadataSchema
     config: DomainConfigSchema
-    entity_types: list[str] = Field(default_factory=list)
-    relation_types: list[str] = Field(default_factory=list)
 
 
 class DomainCreateSchema(BaseModel):
-    """Request to create a domain."""
+    """Request to create a domain.
+
+    Domain provides namespace isolation. It does not define entity/relation types.
+    Use Ontology API to manage types globally.
+    """
 
     name: str = Field(..., min_length=1, max_length=100, description="Domain display name")
     description: str = Field(default="", max_length=1000, description="Domain description")
@@ -52,10 +61,6 @@ class DomainCreateSchema(BaseModel):
         max_length=50,
         pattern=r"^[a-z][a-z0-9_-]*[a-z0-9]$",
         description="Unique domain identifier (lowercase, alphanumeric, underscores, hyphens)",
-    )
-    extraction_prompt_template: str = Field(
-        default="",
-        description="Custom prompt template for entity/relation extraction",
     )
     parent_domain_key: str | None = Field(
         default=None,
@@ -72,7 +77,6 @@ class DomainUpdateSchema(BaseModel):
 
     name: str | None = None
     description: str | None = None
-    extraction_prompt_template: str | None = None
     parent_domain_key: str | None = None
     inherits_base_ontology: bool | None = None
 
@@ -92,13 +96,3 @@ class DomainInheritanceChainSchema(BaseModel):
     domain_key: str
     name: str
     inherits_from: str | None
-
-
-class DomainDiffSchema(BaseModel):
-    """Diff between two domains."""
-
-    added_entity_types: list[str] = Field(default_factory=list)
-    removed_entity_types: list[str] = Field(default_factory=list)
-    added_relation_types: list[str] = Field(default_factory=list)
-    removed_relation_types: list[str] = Field(default_factory=list)
-    config_changes: dict[str, dict[str, Any]] = Field(default_factory=dict)

@@ -109,8 +109,13 @@ class ExtractionSettings(BaseSettings):
 
     max_concurrency: int = Field(default=5, ge=1, le=50)
     max_retries: int = Field(default=2, ge=0, le=5)
+    # 保留字符数配置用于兼容，优先使用 token 数配置
     chunk_size: int = Field(default=512, ge=64)
     chunk_overlap: int = Field(default=64, ge=0)
+    # 基于 token 的分块配置
+    chunk_strategy: str = Field(default="fixed", description="分块策略: fixed/recursive")
+    chunk_token_size: int = Field(default=256, ge=32, description="目标 token 数")
+    tokenizer_model: str = Field(default="cl100k_base", description="tiktoken 模型")
 
 
 class RetrySettings(BaseSettings):
