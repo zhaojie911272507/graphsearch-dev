@@ -17,6 +17,7 @@ import {
   Play,
   Gauge,
   Search,
+  Clock,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -35,6 +36,8 @@ const mainNav: NavItem[] = [
   { name: '文档管理', href: '/documents', icon: FileText },
   { name: '图谱可视化', href: '/graph', icon: Network },
   { name: '图谱问答', href: '/graph/query', icon: Search },
+  { name: '时序查询', href: '/temporal', icon: Clock },
+  { name: '时序统计', href: '/temporal/stats', icon: LineChart },
 ]
 
 // 领域与本体

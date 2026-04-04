@@ -496,3 +496,37 @@ export const queryApi = {
     include_sources?: boolean
   }) => api.post('/query', data),
 }
+
+// Temporal Knowledge Graph APIs
+export const temporalApi = {
+  // Query temporal data
+  query: (data: {
+    entity_id?: string
+    source_id?: string
+    target_id?: string
+    query_type: string
+    from_time?: string
+    to_time?: string
+    timestamp?: string
+  }) => api.post('/temporal/query', data),
+
+  // Generate summary
+  getSummary: (data: {
+    level: 'entity' | 'relationship' | 'global'
+    entity_id?: string
+    entity_name?: string
+    entity_type?: string
+    source_id?: string
+    target_id?: string
+    source_name?: string
+    target_name?: string
+    relation_type?: string
+    time_range?: [string, string]
+  }) => api.post('/temporal/summary', data),
+
+  // Get service status
+  getStatus: () => api.get('/temporal/status'),
+
+  // Trigger manual merge
+  triggerMerge: () => api.post('/temporal/merge'),
+}

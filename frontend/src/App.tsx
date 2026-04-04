@@ -8,6 +8,8 @@ import { Explorations } from './pages/Explorations'
 import { EvaluationDashboard } from './pages/EvaluationDashboard'
 import { GraphViz } from './pages/GraphViz'
 import { GraphQuery } from './pages/GraphQuery'
+import { TemporalQuery } from './pages/TemporalQuery'
+import { TemporalStats } from './pages/TemporalStats'
 import LineageTracking from './pages/LineageTracking'
 import { SettingsPage } from './pages/SettingsPage'
 import { LineageIndex } from './pages/LineageIndex'
@@ -57,6 +59,8 @@ function App() {
         <Route path="pipeline" element={<PipelineConfig />} />
         <Route path="graph" element={<GraphViz />} />
         <Route path="graph/query" element={<GraphQuery />} />
+        <Route path="temporal" element={<TemporalQuery />} />
+        <Route path="temporal/stats" element={<TemporalStats />} />
         <Route path="simulation" element={<SimulationExecution />} />
         <Route path="simulation/reports" element={<SimulationReports />} />
         <Route path="simulation/dialogue" element={<SimulationDialogue />} />
