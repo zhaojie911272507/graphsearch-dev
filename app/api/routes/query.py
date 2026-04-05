@@ -52,6 +52,9 @@ async def query_graph(
             query=request.question,
             top_k=request.top_k,
             traversal_depth=request.traversal_depth,
+            entity_types=request.entity_types,
+            relation_types=request.relation_types,
+            min_entity_score=request.min_entity_score,
         )
 
         if not context.chunks:
@@ -80,7 +83,7 @@ async def query_graph(
             streaming=True,
         )
 
-        async def stream_response() -> AsyncGenerator[str, None]:
+        async def stream_response() -> AsyncGenerator[str]:
             """Generator that streams SSE events."""
             # Send context first
             if request.include_sources:

@@ -39,6 +39,10 @@ class ObservabilitySettings(BaseSettings):
     alertmanager_url: str = Field(default="http://localhost:9093", description="Alertmanager URL")
     webhook_alert_url: str = Field(default="", description="Webhook URL for alert notifications")
 
+    # Query performance monitoring
+    slow_query_threshold_ms: float = Field(default=1000.0, ge=100, description="Threshold in ms for slow query logging")
+    log_slow_queries: bool = Field(default=True, description="Enable slow query logging")
+
 
 def get_observability_settings() -> ObservabilitySettings:
     """Factory function for observability settings."""

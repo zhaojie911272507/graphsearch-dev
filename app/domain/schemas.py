@@ -11,7 +11,6 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.domain.enums import EntityType, RelationType
 
-
 # ──────────────────────────────────────────
 # Ingestion
 # ──────────────────────────────────────────
@@ -53,6 +52,10 @@ class QueryRequest(BaseModel):
     top_k: int = Field(default=10, ge=1, le=100)
     traversal_depth: int = Field(default=2, ge=1, le=5)
     include_sources: bool = Field(default=True)
+    # Filtering options
+    entity_types: list[str] | None = Field(default=None, description="Filter entities by types (e.g., ['Person', 'Organization'])")
+    relation_types: list[str] | None = Field(default=None, description="Filter relations by types")
+    min_entity_score: float | None = Field(default=None, ge=0.0, le=1.0, description="Minimum entity relevance score from traversal")
 
 
 class RetrievedChunk(BaseModel):

@@ -5,33 +5,47 @@ all route modules. Heavy services are initialized once during
 startup and shared via app.state.
 """
 
-import logging
+import time
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 import structlog
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, Response
+from starlette.middleware.base import BaseHTTPMiddleware
 
-from app.api.routes import ingest, query
-from app.api.routes import metadata, ontology, intelligence, evaluation, domains, audit, documents, simulation
-from app.api.routes import simulation_exec, simulation_report, simulation_dialogue
-from app.api.routes import auth, temporal
-from app.visualization.routes import router as viz_router
+from app.api.routes import (
+    audit,
+    auth,
+    documents,
+    domains,
+    evaluation,
+    ingest,
+    intelligence,
+    metadata,
+    ontology,
+    query,
+    simulation,
+    simulation_dialogue,
+    simulation_exec,
+    simulation_report,
+    temporal,
+)
+from app.api.routes.temporal import set_temporal_services
 from app.config import Settings, get_settings
-from app.observability.metrics import MetricsRegistry
-from app.observability.tracing import TracingSetup
-from app.observability.logging import setup_enhanced_logging
 from app.domain.schemas import HealthResponse
 from app.embedding.service import EmbeddingService
 from app.extraction.extractor import GraphExtractor
+from app.observability.logging import setup_enhanced_logging
+from app.observability.metrics import MetricsRegistry
+from app.observability.tracing import TracingSetup
 from app.persistence.graph_store import GraphStore
 from app.persistence.temporal_store import TemporalStore
-from app.services.temporal_knowledge.version_manager import VersionManager
-from app.services.temporal_knowledge.summary_generator import SummaryGenerator
 from app.services.temporal_knowledge.batch_merger import BatchMerger
-from app.api.routes.temporal import set_temporal_services
+from app.services.temporal_knowledge.summary_generator import SummaryGenerator
+from app.services.temporal_knowledge.version_manager import VersionManager
+from app.visualization.routes import router as viz_router
 
 logger = structlog.get_logger(__name__)
 
@@ -42,8 +56,56 @@ def _configure_logging(settings: Settings) -> None:
     setup_enhanced_logging(debug=settings.app.app_debug)
 
 
+# Simple in-memory rate limiter middleware
+class RateLimitMiddleware(BaseHTTPMiddleware):
+    """Simple token bucket rate limiter."""
+
+    def __init__(self, app, requests_per_minute: int = 60, burst: int = 10):
+        super().__init__(app)
+        self.requests_per_minute = requests_per_minute
+        self.burst = burst
+        self.buckets: dict[str, dict] = {}  # ip -> {tokens, last_update}
+
+    async def dispatch(self, request: Request, call_next):
+        # Skip rate limiting for health checks
+        if request.url.path in ["/health", "/metrics", "/docs", "/openapi.json", "/viz/"]:
+            return await call_next(request)
+
+        client_ip = request.client.host if request.client else "unknown"
+        current_time = time.time()
+
+        # Initialize or update bucket
+        if client_ip not in self.buckets:
+            self.buckets[client_ip] = {
+                "tokens": self.burst,
+                "last_update": current_time
+            }
+
+        bucket = self.buckets[client_ip]
+        # Refill tokens based on time elapsed
+        elapsed = current_time - bucket["last_update"]
+        bucket["tokens"] = min(
+            self.burst,
+            bucket["tokens"] + elapsed * (self.requests_per_minute / 60.0)
+        )
+        bucket["last_update"] = current_time
+
+        # Check if request allowed
+        if bucket["tokens"] < 1:
+            return Response(
+                content='{"detail":"Rate limit exceeded. Please try again later."}',
+                status_code=429,
+                media_type="application/json"
+            )
+
+        # Consume token
+        bucket["tokens"] -= 1
+
+        return await call_next(request)
+
+
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     """Application lifecycle manager.
 
     Startup:
@@ -74,7 +136,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await log.awarning("Embedding model not loaded — service will be unavailable", error=str(exc))
 
     # Neo4j connection
-    graph_store = GraphStore(settings.neo4j)
+    graph_store = GraphStore(settings.neo4j, retrieval_settings=settings.retrieval)
     try:
         await graph_store.__aenter__()
         await graph_store.ensure_indexes(dimension=settings.embedding.dimension)
@@ -151,6 +213,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.embedding_service = embedding_service
     app.state.graph_store = graph_store
     app.state.graph_extractor = graph_extractor
+
+    # Add rate limiting middleware
+    if settings.app.rate_limit_enabled:
+        app.add_middleware(
+            RateLimitMiddleware,
+            requests_per_minute=settings.app.rate_limit_requests_per_minute,
+            burst=settings.app.rate_limit_burst,
+        )
 
     await log.ainfo("Graph RAG system ready")
 

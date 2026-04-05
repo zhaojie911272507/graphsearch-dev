@@ -42,6 +42,47 @@ A production-ready **Graph Retrieval-Augmented Generation (RAG)** stack: vector 
 - **Lineage Tracking** — Full data lineage with filtering and expansion views
 - **Pipeline Configuration** — Configurable RAG pipeline settings via UI
 
+### 2025 Enterprise Enhancements
+
+- **Retrieval Filtering** — Filter entities and relations by type during graph traversal
+- **Relationship Deduplication** — Automatic deduplication across chunks with weight-based conflict resolution
+- **Progress Callbacks** — Track extraction pipeline progress with async callbacks
+- **LLM Timeout Control** — Configurable timeout for LLM requests (default 60s)
+- **API Rate Limiting** — Token bucket rate limiting per IP (configurable)
+- **Embedding Cache** — LRU cache for embedding vectors (default 1000 entries)
+- **Webhook Support** — Async webhook notifications with HMAC signature verification
+- **Slow Query Logging** — `@log_slow_query` decorator for performance monitoring
+
+#### Configuration
+
+All new features are configurable via environment variables:
+
+```bash
+# Retrieval
+RETRIEVAL_GRAPH_TRAVERSAL_LIMIT=50
+
+# Extraction
+EXTRACTION_LLM_TIMEOUT=60
+
+# Rate Limiting
+RATE_LIMIT_ENABLED=true
+RATE_LIMIT_REQUESTS_PER_MINUTE=60
+RATE_LIMIT_BURST=10
+
+# Embedding Cache
+EMBEDDING_CACHE_ENABLED=true
+EMBEDDING_CACHE_MAX_SIZE=1000
+
+# Webhook
+WEBHOOK_ENABLED=false
+WEBHOOK_URL=https://your-webhook.com
+WEBHOOK_SECRET=your-secret
+
+# Observability
+LOG_SLOW_QUERIES=true
+SLOW_QUERY_THRESHOLD_MS=1000
+```
+
 ## Quick Start
 
 ### Prerequisites

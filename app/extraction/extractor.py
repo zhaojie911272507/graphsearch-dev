@@ -10,7 +10,7 @@ import asyncio
 import hashlib
 import json
 import logging
-import uuid
+from collections.abc import Awaitable, Callable
 from uuid import UUID
 
 from langchain_openai import ChatOpenAI
@@ -68,36 +68,101 @@ class GraphExtractor:
             model=openai_settings.model,
             temperature=0.0,
             model_kwargs={"response_format": {"type": "json_object"}},
+            timeout=extraction_settings.llm_timeout,  # Add timeout
         )
         self._semaphore = asyncio.Semaphore(extraction_settings.max_concurrency)
         self._max_retries = extraction_settings.max_retries
 
+    # Type alias for progress callback
+    ProgressCallback = Callable[[int, int, str], Awaitable[None]]  # (current, total, status)
+
     async def extract_from_chunks(
         self,
         chunks: list[ChunkNode],
-        domain_context: dict | None = None,  # New parameter for domain context
+        domain_context: dict | None = None,
+        progress_callback: ProgressCallback | None = None,
     ) -> list[ExtractionResult]:
         """Process multiple chunks concurrently with rate limiting.
 
         Args:
             chunks: Text chunks to extract entities/relationships from.
             domain_context: Optional domain context with custom extraction prompt.
+            progress_callback: Optional async callback(completed, total, status)
+                for progress updates. Called after each chunk is processed.
 
         Returns:
             List of ExtractionResult, one per chunk (may be empty on failure).
+            Relationships are deduplicated across all chunks based on
+            (source_id, target_id, relation_type).
         """
-        tasks = [self._process_chunk_with_semaphore(chunk, domain_context) for chunk in chunks]
+        total = len(chunks)
+
+        # Process chunks with progress tracking
+        tasks = []
+        for i, chunk in enumerate(chunks):
+            task = self._process_chunk_with_semaphore(chunk, domain_context, i, total, progress_callback)
+            tasks.append(task)
+
         results = await asyncio.gather(*tasks, return_exceptions=False)
-        return results
+
+        # Deduplicate relationships across chunks
+        return self._deduplicate_relationships(results)
+
+    def _deduplicate_relationships(
+        self,
+        results: list[ExtractionResult],
+    ) -> list[ExtractionResult]:
+        """Remove duplicate relationships based on source_id + target_id + relation_type.
+
+        When duplicates are found, keeps the one with highest weight.
+        """
+        # Collect all relationships with their source chunk info
+        seen_keys: dict[str, tuple[GraphRelationship, int]] = {}  # key -> (relationship, weight)
+
+        for result in results:
+            for rel in result.relationships:
+                # Create dedup key
+                key = f"{rel.source_id}:{rel.target_id}:{rel.relation_type.value}"
+
+                if key not in seen_keys or rel.weight > seen_keys[key][1]:
+                    seen_keys[key] = (rel, rel.weight)
+
+        # Rebuild results with deduplicated relationships
+        deduped_results: list[ExtractionResult] = []
+        for result in results:
+            # Filter relationships to only keep deduplicated ones
+            deduped_rels = [
+                seen_keys[f"{rel.source_id}:{rel.target_id}:{rel.relation_type.value}"][0]
+                for rel in result.relationships
+                if f"{rel.source_id}:{rel.target_id}:{rel.relation_type.value}" in seen_keys
+            ]
+
+            deduped_results.append(ExtractionResult(
+                chunk_id=result.chunk_id,
+                entities=result.entities,
+                concepts=result.concepts,
+                relationships=deduped_rels,
+            ))
+
+        return deduped_results
 
     async def _process_chunk_with_semaphore(
         self,
         chunk: ChunkNode,
-        domain_context: dict | None = None,  # New parameter
+        domain_context: dict | None = None,
+        chunk_index: int = 0,
+        total_chunks: int = 1,
+        progress_callback: ProgressCallback | None = None,
     ) -> ExtractionResult:
         """Acquire semaphore and process a single chunk."""
         async with self._semaphore:
-            return await self._process_chunk_safe(chunk, domain_context)
+            result = await self._process_chunk_safe(chunk, domain_context)
+
+            # Report progress if callback provided
+            if progress_callback:
+                await progress_callback(chunk_index + 1, total_chunks, f"Processed chunk {chunk_index + 1}/{total_chunks}")
+
+            return result
 
     async def _process_chunk_safe(
         self,

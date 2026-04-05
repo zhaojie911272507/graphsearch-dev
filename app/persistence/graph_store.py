@@ -11,9 +11,9 @@ from typing import Self
 
 from neo4j import AsyncDriver, AsyncGraphDatabase, AsyncManagedTransaction
 
-from app.config import Neo4jSettings
+from app.config import Neo4jSettings, RetrievalSettings
 from app.domain.enums import NodeType, RelationType
-from app.domain.nodes import GraphNode, EntityNode, ConceptNode
+from app.domain.nodes import ConceptNode, EntityNode, GraphNode
 from app.domain.relationships import GraphRelationship
 from app.exceptions import Neo4jConnectionError, Neo4jQueryError, Neo4jTransactionError
 from app.utils.retry import with_retry
@@ -147,7 +147,7 @@ CALL {
     MATCH path = (start)-[*1..$depth]-(neighbor)
     WHERE neighbor:Entity OR neighbor:Concept
     RETURN neighbor, relationships(path) AS rels
-    LIMIT 50
+    LIMIT $traversal_limit
 }
 RETURN DISTINCT neighbor, rels
 """
@@ -314,8 +314,13 @@ class GraphStore:
         settings: Neo4j connection configuration.
     """
 
-    def __init__(self, settings: Neo4jSettings) -> None:
+    def __init__(
+        self,
+        settings: Neo4jSettings,
+        retrieval_settings: RetrievalSettings | None = None,
+    ) -> None:
         self._settings = settings
+        self._retrieval_settings = retrieval_settings
         self._driver: AsyncDriver | None = None
 
     async def __aenter__(self) -> Self:
@@ -408,7 +413,7 @@ class GraphStore:
             try:
                 # Execute all index creation queries
                 for i, query in enumerate(_ALL_INDEXES):
-                    result = await session.run(query)
+                    await session.run(query)
                     # Count the number of indexes created (approximately)
                     stats_key = list(stats.keys())[i]
                     stats[stats_key] = 4  # Each query creates 4 indexes
@@ -686,12 +691,21 @@ class GraphStore:
         self,
         chunk_ids: list[str],
         depth: int = 2,
+        traversal_limit: int | None = None,
+        entity_types: list[str] | None = None,
+        relation_types: list[str] | None = None,
     ) -> list[dict[str, object]]:
         """Traverse graph outward from given chunks to discover context.
 
         Args:
             chunk_ids: Starting Chunk node IDs.
             depth: Maximum traversal hops (1-5).
+            traversal_limit: Maximum neighbors to return per chunk. If None,
+                uses retrieval_settings.vector_top_k * 5 or defaults to 50.
+            entity_types: Optional list of entity types to filter neighbors.
+                If None, all Entity/Concept nodes are returned.
+            relation_types: Optional list of relationship types to filter.
+                If None, all relationship types are returned.
 
         Returns:
             List of neighbor nodes and their connecting relationships.
@@ -699,13 +713,49 @@ class GraphStore:
         if not chunk_ids:
             return []
 
+        # Determine traversal limit
+        if traversal_limit is None:
+            if self._retrieval_settings:
+                traversal_limit = self._retrieval_settings.graph_traversal_limit
+            else:
+                traversal_limit = 50
+
         async with self.driver.session(database=self._settings.database) as session:
             try:
-                result = await session.run(
-                    _GRAPH_TRAVERSAL,
-                    chunk_ids=chunk_ids,
-                    depth=depth,
-                )
+                # Build dynamic filter conditions
+                params: dict[str, object] = {
+                    "chunk_ids": chunk_ids,
+                    "depth": depth,
+                    "traversal_limit": traversal_limit,
+                }
+
+                # Build entity type filter
+                entity_filter = ""
+                if entity_types:
+                    entity_filter = "AND neighbor.entity_type IN $entity_types"
+                    params["entity_types"] = entity_types
+
+                # Build relation type filter
+                relation_filter = ""
+                if relation_types:
+                    relation_filter = "AND ANY(r IN rels WHERE type(r) IN $relation_types)"
+                    params["relation_types"] = relation_types
+
+                # Build query with filters
+                query = f"""
+                MATCH (start:Chunk)
+                WHERE start.id IN $chunk_ids
+                CALL {{
+                    WITH start
+                    MATCH path = (start)-[*1..$depth]-(neighbor)
+                    WHERE neighbor:Entity OR neighbor:Concept {entity_filter} {relation_filter}
+                    RETURN neighbor, relationships(path) AS rels
+                    LIMIT $traversal_limit
+                }}
+                RETURN DISTINCT neighbor, rels
+                """
+
+                result = await session.run(query, **params)
                 records = [record.data() async for record in result]
                 return records
             except Exception as exc:
@@ -869,10 +919,10 @@ class GraphStore:
             params: dict[str, object] = {"limit": limit, "offset": offset}
 
             if node_type:
-                where_clauses.append(f"n.node_type = $node_type")
+                where_clauses.append("n.node_type = $node_type")
                 params["node_type"] = node_type
             if entity_type:
-                where_clauses.append(f"n.entity_type = $entity_type")
+                where_clauses.append("n.entity_type = $entity_type")
                 params["entity_type"] = entity_type
             if search_query:
                 where_clauses.append("(n.name CONTAINS $q OR n.title CONTAINS $q OR n.content CONTAINS $q)")
@@ -916,10 +966,10 @@ class GraphStore:
             params: dict[str, object] = {}
 
             if node_type:
-                where_clauses.append(f"n.node_type = $node_type")
+                where_clauses.append("n.node_type = $node_type")
                 params["node_type"] = node_type
             if entity_type:
-                where_clauses.append(f"n.entity_type = $entity_type")
+                where_clauses.append("n.entity_type = $entity_type")
                 params["entity_type"] = entity_type
             if search_query:
                 where_clauses.append("(n.name CONTAINS $q OR n.title CONTAINS $q OR n.content CONTAINS $q)")
@@ -1921,8 +1971,8 @@ class GraphStore:
     async def count_entity_instances(self, entity_type: str) -> int:
         """Count instances of an entity type."""
         async with self.driver.session(database=self._settings.database) as session:
-            query = f"""
-            MATCH (n:Entity {{entity_type: $entity_type}})
+            query = """
+            MATCH (n:Entity {entity_type: $entity_type})
             RETURN count(n) as count
             """
             try:
