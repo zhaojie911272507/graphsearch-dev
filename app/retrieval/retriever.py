@@ -46,6 +46,9 @@ class GraphRetriever:
         traversal_depth: int = 2,
         *,
         vector_only: bool = False,
+        entity_types: list[str] | None = None,
+        relation_types: list[str] | None = None,
+        min_entity_score: float | None = None,
     ) -> RetrievalContext:
         """Execute the retrieval pipeline.
 
@@ -54,6 +57,9 @@ class GraphRetriever:
             top_k: Number of chunks from vector search.
             traversal_depth: Graph traversal hops from seed chunks.
             vector_only: If True, skip graph traversal (baseline mode).
+            entity_types: Filter entities by type during traversal.
+            relation_types: Filter relations by type during traversal.
+            min_entity_score: Minimum score threshold for entity filtering.
 
         Returns:
             Assembled RetrievalContext with chunks and optionally entities/relations.
@@ -89,9 +95,14 @@ class GraphRetriever:
             traversal_results = await self._store.traverse_from_chunks(
                 chunk_ids=chunk_ids,
                 depth=traversal_depth,
+                entity_types=entity_types,
+                relation_types=relation_types,
             )
             graph_traversal_ms = (time.monotonic() - t2) * 1000
-            entities, relations = self._parse_traversal_results(traversal_results)
+            entities, relations = self._parse_traversal_results(
+                traversal_results,
+                min_score=min_entity_score,
+            )
 
         total_ms = (time.monotonic() - start) * 1000
         logger.info(
@@ -152,8 +163,18 @@ class GraphRetriever:
     def _parse_traversal_results(
         self,
         records: list[dict[str, object]],
+        min_score: float | None = None,
     ) -> tuple[list[RetrievedEntity], list[RetrievedRelation]]:
-        """Convert Neo4j traversal records to domain models."""
+        """Convert Neo4j traversal records to domain models.
+
+        Args:
+            records: List of traversal result records from Neo4j.
+            min_score: Minimum score threshold for entity filtering (not currently
+                available in traversal results, but reserved for future use).
+
+        Returns:
+            Tuple of (entities, relations) parsed from the records.
+        """
         entities: list[RetrievedEntity] = []
         relations: list[RetrievedRelation] = []
         seen_entity_ids: set[str] = set()
@@ -214,5 +235,13 @@ class GraphRetriever:
                             weight=float(rel_props.get("weight", 0.5)),  # type: ignore[arg-type]
                         )
                     )
+
+        # Apply minimum score filter if specified (placeholder for future implementation)
+        if min_score is not None and min_score > 0:
+            logger.debug(
+                "min_entity_score filter specified (%.2f) but score is not available "
+                "in traversal results - skipping filter",
+                min_score,
+            )
 
         return entities, relations

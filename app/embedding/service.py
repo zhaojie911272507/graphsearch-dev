@@ -7,6 +7,7 @@ once during application startup and shared across all async request handlers.
 import asyncio
 import logging
 import threading
+from collections import OrderedDict
 from functools import lru_cache
 from pathlib import Path
 
@@ -50,6 +51,10 @@ class EmbeddingService:
         self._settings = settings
         self._model: SentenceTransformer | None = None
         self._initialized = True
+
+        # Initialize cache
+        self._cache: OrderedDict[str, list[float]] = OrderedDict()
+        self._cache_max_size = settings.cache_max_size if settings.cache_enabled else 0
 
     @property
     def dimension(self) -> int:
@@ -139,7 +144,48 @@ class EmbeddingService:
         if not texts:
             return []
 
-        vectors = await asyncio.to_thread(self._embed_sync, texts)
+        # Check cache first for each text
+        uncached_texts: list[str] = []
+        cached_vectors: list[list[float] | None] = [None] * len(texts)
+
+        if self._cache_max_size > 0:
+            for i, text in enumerate(texts):
+                # Use hash as cache key for long texts
+                cache_key = str(hash(text))
+                if cache_key in self._cache:
+                    cached_vectors[i] = self._cache[cache_key]
+                    # Move to end (most recently used)
+                    del self._cache[cache_key]
+                    self._cache[cache_key] = cached_vectors[i]
+                else:
+                    uncached_texts.append(text)
+        else:
+            uncached_texts = texts
+
+        # Embed any uncached texts
+        if uncached_texts:
+            new_vectors = await asyncio.to_thread(self._embed_sync, uncached_texts)
+
+            # Add to cache
+            if self._cache_max_size > 0:
+                for text, vector in zip(uncached_texts, new_vectors, strict=True):
+                    cache_key = str(hash(text))
+                    self._cache[cache_key] = vector
+                    # Evict oldest if cache full
+                    while len(self._cache) > self._cache_max_size:
+                        self._cache.popitem(last=False)
+
+            # Merge cached and new vectors
+            vectors = []
+            new_idx = 0
+            for cached in cached_vectors:
+                if cached is not None:
+                    vectors.append(cached)
+                else:
+                    vectors.append(new_vectors[new_idx])
+                    new_idx += 1
+        else:
+            vectors = cached_vectors  # type: ignore[assignment]
 
         # Runtime dimension check
         for i, vec in enumerate(vectors):

@@ -29,6 +29,12 @@ class AppSettings(BaseSettings):
     app_name: str = Field(default="GraphSearchNeo4j")
     app_env: AppEnvironment = Field(default=AppEnvironment.DEVELOPMENT)
     app_debug: bool = Field(default=False)
+
+    # Rate limiting
+    rate_limit_enabled: bool = Field(default=True, description="Enable API rate limiting")
+    rate_limit_requests_per_minute: int = Field(default=60, ge=10, le=1000, description="Max requests per minute per IP")
+    rate_limit_burst: int = Field(default=10, ge=1, le=100, description="Burst allowance for rate limiting")
+
     log_level: str = Field(default="INFO")
     domain_auto_bootstrap: bool = Field(
         default=True,
@@ -77,6 +83,10 @@ class EmbeddingSettings(BaseSettings):
     dimension: int = Field(default=1024, ge=1)
     device: str = Field(default="cpu")
 
+    # Caching
+    cache_enabled: bool = Field(default=True, description="Enable embedding cache")
+    cache_max_size: int = Field(default=1000, ge=10, le=10000, description="Max cache entries")
+
     @field_validator("model_path")
     @classmethod
     def validate_model_path(cls, v: str) -> str:
@@ -100,6 +110,7 @@ class RetrievalSettings(BaseSettings):
 
     vector_top_k: int = Field(default=10, ge=1, le=100)
     graph_traversal_depth: int = Field(default=2, ge=1, le=5)
+    graph_traversal_limit: int = Field(default=50, ge=10, le=500, description="Max entities to return from graph traversal per chunk")
 
 
 class ExtractionSettings(BaseSettings):
@@ -109,6 +120,7 @@ class ExtractionSettings(BaseSettings):
 
     max_concurrency: int = Field(default=5, ge=1, le=50)
     max_retries: int = Field(default=2, ge=0, le=5)
+    llm_timeout: int = Field(default=60, ge=10, le=300, description="LLM request timeout in seconds")
     # 保留字符数配置用于兼容，优先使用 token 数配置
     chunk_size: int = Field(default=512, ge=64)
     chunk_overlap: int = Field(default=64, ge=0)
@@ -154,6 +166,18 @@ class TemporalSettings(BaseSettings):
     summary_enabled: bool = Field(default=True)
 
 
+class WebhookSettings(BaseSettings):
+    """Webhook configuration for async notifications."""
+
+    model_config = SettingsConfigDict(env_prefix="WEBHOOK_", env_file=".env", extra="ignore")
+
+    enabled: bool = Field(default=False, description="Enable webhook notifications")
+    url: str = Field(default="", description="Webhook target URL")
+    secret: str = Field(default="", description="Webhook secret for signature verification")
+    timeout: int = Field(default=10, ge=1, le=60, description="Request timeout in seconds")
+    retry_count: int = Field(default=3, ge=0, le=5, description="Number of retries on failure")
+
+
 class Settings(BaseSettings):
     """Aggregated application settings — single source of truth."""
 
@@ -169,6 +193,7 @@ class Settings(BaseSettings):
     simulation: SimulationSettings = Field(default_factory=SimulationSettings)
     observability: ObservabilitySettings = Field(default_factory=ObservabilitySettings)
     temporal: TemporalSettings = Field(default_factory=TemporalSettings)
+    webhook: WebhookSettings = Field(default_factory=WebhookSettings)
 
 
 def get_settings() -> Settings:
