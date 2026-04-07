@@ -3,6 +3,13 @@
 import { useState } from 'react'
 import { useMutation } from '@tanstack/react-query'
 import { ontologyApi } from '@/lib/api'
+import type {
+  OntologyApplyRecommendationsRequest,
+  OntologyRecommendationsBundle,
+  OntologyRecommendRequest,
+  RecommendedEntityTypeDraft,
+  RecommendedRelationTypeDraft,
+} from '@/schemas/api-contracts'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
@@ -11,49 +18,26 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { useToast } from '@/contexts/ToastContext'
 import { Brain, Sparkles, RotateCw, Check, X, Tag, GitBranch, ArrowRight } from 'lucide-react'
 
-interface EntityType {
-  name: string
-  description: string
-  color: string
-  icon: string
-  extraction_prompt_template: string
-  example_instances?: string[]
-}
-
-interface RelationType {
-  name: string
-  description: string
-  source_types: string[]
-  target_types: string[]
-  directionality: string
-  extraction_prompt?: string
-}
-
-interface Recommendation {
-  entity_types: EntityType[]
-  relation_types: RelationType[]
-}
-
 interface EntityExtractPanelProps {
   onSuccess?: () => void
 }
 
 export function EntityExtractPanel({ onSuccess }: EntityExtractPanelProps) {
   const [showApplyDialog, setShowApplyDialog] = useState(false)
-  const [recommendation, setRecommendation] = useState<Recommendation | null>(null)
+  const [recommendation, setRecommendation] = useState<OntologyRecommendationsBundle | null>(null)
   const [selectedEntityTypes, setSelectedEntityTypes] = useState<Set<string>>(new Set())
   const [selectedRelationTypes, setSelectedRelationTypes] = useState<Set<string>>(new Set())
   const { toast } = useToast()
 
   // AI Recommendation mutation
   const recommendMutation = useMutation({
-    mutationFn: (data?: any) => ontologyApi.getRecommendations(data),
+    mutationFn: (data?: OntologyRecommendRequest) => ontologyApi.getRecommendations(data),
     onSuccess: (response) => {
       if (response.data.success) {
         setRecommendation(response.data.recommendations)
         setShowApplyDialog(true)
-        setSelectedEntityTypes(new Set(response.data.recommendations.entity_types.map((t: EntityType) => t.name)))
-        setSelectedRelationTypes(new Set(response.data.recommendations.relation_types.map((t: RelationType) => t.name)))
+        setSelectedEntityTypes(new Set(response.data.recommendations.entity_types.map((t) => t.name)))
+        setSelectedRelationTypes(new Set(response.data.recommendations.relation_types.map((t) => t.name)))
       } else {
         toast({
           title: '分析失败',
@@ -73,7 +57,7 @@ export function EntityExtractPanel({ onSuccess }: EntityExtractPanelProps) {
 
   // Apply recommendations mutation
   const applyMutation = useMutation({
-    mutationFn: (data: { entity_types: EntityType[]; relation_types: RelationType[] }) =>
+    mutationFn: (data: OntologyApplyRecommendationsRequest) =>
       ontologyApi.applyRecommendations(data),
     onSuccess: (response) => {
       if (response.data.success) {
@@ -226,7 +210,7 @@ export function EntityExtractPanel({ onSuccess }: EntityExtractPanelProps) {
                   </h4>
                   <ScrollArea className="h-64 border rounded-md p-2">
                     <div className="space-y-2">
-                      {recommendation.entity_types?.map((entityType: EntityType) => (
+                      {recommendation.entity_types?.map((entityType: RecommendedEntityTypeDraft) => (
                         <div
                           key={entityType.name}
                           className={`flex items-start gap-2 p-2 rounded-md cursor-pointer transition-colors ${
@@ -272,7 +256,7 @@ export function EntityExtractPanel({ onSuccess }: EntityExtractPanelProps) {
                   </h4>
                   <ScrollArea className="h-64 border rounded-md p-2">
                     <div className="space-y-2">
-                      {recommendation.relation_types?.map((relationType: RelationType) => (
+                      {recommendation.relation_types?.map((relationType: RecommendedRelationTypeDraft) => (
                         <div
                           key={relationType.name}
                           className={`flex items-start gap-2 p-2 rounded-md cursor-pointer transition-colors ${

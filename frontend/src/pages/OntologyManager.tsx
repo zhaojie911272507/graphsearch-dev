@@ -3,6 +3,13 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ontologyApi } from '@/lib/api'
+import type {
+  OntologyApplyRecommendationsRequest,
+  OntologyRecommendationsBundle,
+  OntologyRecommendRequest,
+  RecommendedEntityTypeDraft,
+  RecommendedRelationTypeDraft,
+} from '@/schemas/api-contracts'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
@@ -46,29 +53,10 @@ interface RelationType {
   instance_count: number
 }
 
-interface Recommendation {
-  entity_types: Array<{
-    name: string
-    description: string
-    color: string
-    icon: string
-    extraction_prompt_template: string
-    example_instances?: string[]
-  }>
-  relation_types: Array<{
-    name: string
-    description: string
-    source_types: string[]
-    target_types: string[]
-    directionality: string
-    extraction_prompt?: string
-  }>
-}
-
 export function OntologyManager() {
   const [activeTab, setActiveTab] = useState('entity-types')
   const [showApplyDialog, setShowApplyDialog] = useState(false)
-  const [recommendation, setRecommendation] = useState<Recommendation | null>(null)
+  const [recommendation, setRecommendation] = useState<OntologyRecommendationsBundle | null>(null)
   const [selectedEntityTypes, setSelectedEntityTypes] = useState<Set<string>>(new Set())
   const [selectedRelationTypes, setSelectedRelationTypes] = useState<Set<string>>(new Set())
 
@@ -144,14 +132,18 @@ export function OntologyManager() {
 
   // AI Recommendation mutation
   const recommendMutation = useMutation({
-    mutationFn: (data?: any) => ontologyApi.getRecommendations(data),
+    mutationFn: (data?: OntologyRecommendRequest) => ontologyApi.getRecommendations(data),
     onSuccess: (response) => {
       if (response.data.success) {
         setRecommendation(response.data.recommendations)
         setShowApplyDialog(true)
         // Pre-select all recommendations
-        setSelectedEntityTypes(new Set(response.data.recommendations.entity_types.map((t: any) => t.name)))
-        setSelectedRelationTypes(new Set(response.data.recommendations.relation_types.map((t: any) => t.name)))
+        setSelectedEntityTypes(
+          new Set(response.data.recommendations.entity_types.map((t: RecommendedEntityTypeDraft) => t.name))
+        )
+        setSelectedRelationTypes(
+          new Set(response.data.recommendations.relation_types.map((t: RecommendedRelationTypeDraft) => t.name))
+        )
       } else {
         toast({
           title: '分析失败',
@@ -171,7 +163,7 @@ export function OntologyManager() {
 
   // Apply recommendations mutation
   const applyMutation = useMutation({
-    mutationFn: (data: { entity_types: any[]; relation_types: any[] }) =>
+    mutationFn: (data: OntologyApplyRecommendationsRequest) =>
       ontologyApi.applyRecommendations(data),
     onSuccess: (response) => {
       if (response.data.success) {
@@ -205,8 +197,12 @@ export function OntologyManager() {
   const handleApplySelected = () => {
     if (!recommendation) return
 
-    const entityTypesToApply = recommendation.entity_types.filter((t: any) => selectedEntityTypes.has(t.name))
-    const relationTypesToApply = recommendation.relation_types.filter((t: any) => selectedRelationTypes.has(t.name))
+    const entityTypesToApply = recommendation.entity_types.filter((t: RecommendedEntityTypeDraft) =>
+      selectedEntityTypes.has(t.name)
+    )
+    const relationTypesToApply = recommendation.relation_types.filter((t: RecommendedRelationTypeDraft) =>
+      selectedRelationTypes.has(t.name)
+    )
 
     applyMutation.mutate({
       entity_types: entityTypesToApply,

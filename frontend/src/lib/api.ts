@@ -1,5 +1,15 @@
 import axios, { type AxiosRequestConfig, type AxiosError } from 'axios'
 
+import type {
+  AgentGenerateRequestPayload,
+  DialogueHistoryTurn,
+  OntologyApplyRecommendationsRequest,
+  OntologyApplyResponse,
+  OntologyRecommendRequest,
+  OntologyRecommendResponse,
+  WorldConfigRequestPayload,
+} from '@/schemas/api-contracts'
+
 const API_BASE = '/api/v1'
 
 // Retry configuration
@@ -83,9 +93,6 @@ api.interceptors.response.use(
           localStorage.removeItem('access_token')
           localStorage.removeItem('user')
           window.location.href = '/login'
-          break
-        case 401:
-          errorMessage = '未授权，请登录'
           break
         case 403:
           errorMessage = '拒绝访问'
@@ -184,11 +191,11 @@ export const ontologyApi = {
     api.post('/ontology/versions', data),
 
   // AI-powered recommendation APIs
-  getRecommendations: (data?: { documents?: any[]; max_entity_types?: number; max_relation_types?: number; domain_key?: string }) =>
-    api.post('/ontology/recommend', data || {}),
+  getRecommendations: (data?: OntologyRecommendRequest) =>
+    api.post<OntologyRecommendResponse>('/ontology/recommend', data ?? {}),
 
-  applyRecommendations: (data: { entity_types: any[]; relation_types: any[] }) =>
-    api.post('/ontology/recommendations/apply', data),
+  applyRecommendations: (data: OntologyApplyRecommendationsRequest) =>
+    api.post<OntologyApplyResponse>('/ontology/recommendations/apply', data),
 
   getDocumentsForAnalysis: (limit?: number) =>
     api.get('/ontology/documents/for-analysis', { params: { limit } }),
@@ -435,9 +442,9 @@ export const simulationApi = {
   }) => api.post('/simulation/bootstrap', data),
   extractSeeds: (data: { source_type: string; content: string }) =>
     api.post('/simulation/seeds/extract', data),
-  generateAgents: (data: { seed_entities: any[]; seed_relations: any[]; agent_count: number }) =>
+  generateAgents: (data: AgentGenerateRequestPayload) =>
     api.post('/simulation/agents/generate', data),
-  configureWorld: (data: { session_id: string; world_state_config: any }) =>
+  configureWorld: (data: WorldConfigRequestPayload) =>
     api.post('/simulation/world/configure', data),
 }
 
@@ -480,10 +487,10 @@ export const simulationDialogueApi = {
     api.post('/simulation/dialogue/message', data),
 
   // Direct chat with agent
-  chatWithAgent: (agentId: string, message: string, conversation_history?: any[]) =>
+  chatWithAgent: (agentId: string, message: string, conversationHistory?: DialogueHistoryTurn[]) =>
     api.post(`/simulation/dialogue/agents/${agentId}/chat`, {
       message,
-      conversation_history,
+      conversation_history: conversationHistory,
     }),
 }
 
