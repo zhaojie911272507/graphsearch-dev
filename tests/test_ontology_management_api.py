@@ -38,7 +38,7 @@ def mock_graph_store():
             "updated_at": "2026-03-26T00:00:00Z",
         },
         {
-            "name": "CustomEntity",
+            "name": "CUSTOM_ENTITY",
             "description": "A custom entity",
             "color": "#7ee787",
             "icon": "tag",
@@ -50,7 +50,7 @@ def mock_graph_store():
     ])
     store.count_entity_instances = AsyncMock(return_value=10)
     store.get_entity_type_by_name = AsyncMock(return_value={
-        "name": "CustomEntity",
+        "name": "CUSTOM_ENTITY",
         "description": "A custom entity",
         "color": "#7ee787",
         "icon": "tag",
@@ -60,7 +60,7 @@ def mock_graph_store():
         "extraction_prompt_template": "Extract custom entities...",
     })
     store.create_entity_type = AsyncMock(return_value={
-        "name": "NewEntity",
+        "name": "NEW_ENTITY",
         "description": "A new entity",
         "color": "#ff7b72",
         "icon": "plus",
@@ -70,7 +70,7 @@ def mock_graph_store():
         "extraction_prompt_template": "Extract new entities...",
     })
     store.update_entity_type = AsyncMock(return_value={
-        "name": "CustomEntity",
+        "name": "CUSTOM_ENTITY",
         "description": "Updated description",
         "color": "#7ee787",
         "icon": "tag",
@@ -100,7 +100,7 @@ def mock_graph_store():
             "target_types": ["ASSET"],
             "directionality": "DIRECTED",
             "is_builtin": False,
-            "properties": ["since"],
+            "properties": [{"name": "since", "type": "string"}],
             "extraction_prompt": "Extract ownership relationships...",
         },
     ])
@@ -112,7 +112,7 @@ def mock_graph_store():
         "target_types": ["ASSET"],
         "directionality": "DIRECTED",
         "is_builtin": False,
-        "properties": ["since"],
+        "properties": [{"name": "since", "type": "string"}],
         "extraction_prompt": "Extract ownership relationships...",
     })
     store.create_relation_type = AsyncMock(return_value={
@@ -122,7 +122,7 @@ def mock_graph_store():
         "target_types": ["TECHNOLOGY"],
         "directionality": "DIRECTED",
         "is_builtin": False,
-        "properties": ["duration"],
+        "properties": [{"name": "duration", "type": "string"}],
         "extraction_prompt": "Extract usage relationships...",
     })
     store.update_relation_type = AsyncMock(return_value={
@@ -132,7 +132,7 @@ def mock_graph_store():
         "target_types": ["ASSET"],
         "directionality": "DIRECTED",
         "is_builtin": False,
-        "properties": ["since", "percentage"],
+        "properties": [{"name": "since", "type": "string"}, {"name": "percentage", "type": "number"}],
         "extraction_prompt": "Updated extraction prompt...",
     })
     store.delete_relation_type = AsyncMock(return_value=None)
@@ -140,7 +140,7 @@ def mock_graph_store():
     # Ontology versions
     store.get_ontology_versions = AsyncMock(return_value=[
         {
-            "version": "v2.0",
+            "version": "v2.0.0",
             "created_at": "2026-03-26T01:00:00Z",
             "created_by": "user-1",
             "change_summary": "Added new entity types",
@@ -148,7 +148,7 @@ def mock_graph_store():
             "is_active": True,
         },
         {
-            "version": "v1.0",
+            "version": "v1.0.0",
             "created_at": "2026-03-26T00:00:00Z",
             "created_by": "system",
             "change_summary": "Initial version",
@@ -157,7 +157,7 @@ def mock_graph_store():
         },
     ])
     store.get_ontology_version = AsyncMock(return_value={
-        "version": "v2.0",
+        "version": "v2.0.0",
         "created_at": "2026-03-26T01:00:00Z",
         "created_by": "user-1",
         "change_summary": "Added new entity types",
@@ -165,7 +165,7 @@ def mock_graph_store():
         "is_active": True,
     })
     store.create_ontology_version = AsyncMock(return_value={
-        "version": "v3.0",
+        "version": "v3.0.0",
         "created_at": "2026-03-26T02:00:00Z",
         "created_by": "user-2",
         "change_summary": "Major update",
@@ -175,10 +175,10 @@ def mock_graph_store():
     store.get_ontology_version_diff = AsyncMock(return_value={
         "added_entity_types": ["NewType1", "NewType2"],
         "removed_entity_types": ["OldType"],
-        "modified_entity_types": ["ModifiedType"],
+        "modified_entity_types": [{"name": "ModifiedType", "change": "description updated"}],
         "added_relation_types": ["NewRelation"],
         "removed_relation_types": ["OldRelation"],
-        "modified_relation_types": ["ModifiedRelation"],
+        "modified_relation_types": [{"name": "ModifiedRelation", "change": "properties updated"}],
     })
     store.rollback_ontology_to_version = AsyncMock(return_value=True)
 
@@ -216,8 +216,11 @@ class TestEntityTypeManagement:
 
     def test_create_entity_type_success(self, client, mock_graph_store):
         """Test creating a new custom entity type."""
+        # Ensure get_entity_type_by_name returns None for the new entity
+        mock_graph_store.get_entity_type_by_name = AsyncMock(return_value=None)
+
         entity_type_data = {
-        "name": "NewEntity",
+        "name": "NEW_ENTITY",
         "description": "A new entity",
         "color": "#ff7b72",
         "icon": "plus",
@@ -231,7 +234,7 @@ class TestEntityTypeManagement:
 
         assert response.status_code == 201
         data = response.json()
-        assert data["name"] == "NewEntity"
+        assert data["name"] == "NEW_ENTITY"
         assert not data["is_builtin"]
         assert data["instance_count"] == 0
         mock_graph_store.create_entity_type.assert_called_once()
@@ -239,13 +242,13 @@ class TestEntityTypeManagement:
     def test_create_entity_type_conflict(self, client, mock_graph_store):
         """Test creating an entity type that already exists."""
         mock_graph_store.get_entity_type_by_name = AsyncMock(return_value={
-        "name": "ExistingType",
+        "name": "EXISTING_TYPE",
         "is_builtin": False,
         })
 
         response = client.post(
             "/api/v1/ontology/entity-types",
-            json={"name": "ExistingType", "description": "Existing"},
+            json={"name": "EXISTING_TYPE", "description": "Existing"},
         )
 
         assert response.status_code == 409
@@ -261,7 +264,7 @@ class TestEntityTypeManagement:
         }
 
         response = client.put(
-            "/api/v1/ontology/entity-types/CustomEntity",
+            "/api/v1/ontology/entity-types/CUSTOM_ENTITY",
             json=update_data,
         )
 
@@ -301,16 +304,16 @@ class TestEntityTypeManagement:
         """Test deleting a custom entity type."""
         mock_graph_store.count_entity_instances = AsyncMock(return_value=0)
 
-        response = client.delete("/api/v1/ontology/entity-types/CustomEntity")
+        response = client.delete("/api/v1/ontology/entity-types/CUSTOM_ENTITY")
 
         assert response.status_code == 204
-        mock_graph_store.delete_entity_type.assert_called_once_with("CustomEntity")
+        mock_graph_store.delete_entity_type.assert_called_once_with("CUSTOM_ENTITY")
 
     def test_delete_entity_type_not_found(self, client, mock_graph_store):
         """Test deleting a non-existent entity type."""
         mock_graph_store.get_entity_type_by_name = AsyncMock(return_value=None)
 
-        response = client.delete("/api/v1/ontology/entity-types/NonExistent")
+        response = client.delete("/api/v1/ontology/entity-types/NONEXISTENT")
 
         assert response.status_code == 404
 
@@ -330,7 +333,7 @@ class TestEntityTypeManagement:
         """Test that entity types with instances cannot be deleted."""
         mock_graph_store.count_entity_instances = AsyncMock(return_value=5)
 
-        response = client.delete("/api/v1/ontology/entity-types/CustomEntity")
+        response = client.delete("/api/v1/ontology/entity-types/CUSTOM_ENTITY")
 
         assert response.status_code == 409
         assert "Cannot delete" in response.json()["detail"]
@@ -352,13 +355,16 @@ class TestRelationTypeManagement:
 
     def test_create_relation_type_success(self, client, mock_graph_store):
         """Test creating a new custom relation type."""
+        # Ensure get_relation_type_by_name returns None for the new relation
+        mock_graph_store.get_relation_type_by_name = AsyncMock(return_value=None)
+
         relation_type_data = {
         "name": "USES",
         "description": "Usage relationship",
         "source_types": ["PERSON"],
         "target_types": ["TECHNOLOGY"],
         "directionality": "DIRECTED",
-        "properties": ["duration"],
+        "properties": [{"name": "duration", "type": "string"}],
         "extraction_prompt": "Extract usage relationships...",
         }
 
@@ -378,7 +384,7 @@ class TestRelationTypeManagement:
         """Test updating an existing relation type."""
         update_data = {
         "description": "Updated ownership",
-        "properties": ["since", "percentage"],
+        "properties": [{"name": "since", "type": "string"}, {"name": "percentage", "type": "number"}],
         "extraction_prompt": "Updated extraction prompt...",
         }
 
@@ -427,13 +433,15 @@ class TestOntologyVersioning:
 
     def test_create_ontology_version_success(self, client, mock_graph_store):
         """Test creating a new ontology version."""
+        # Set get_ontology_version to return None so the new version doesn't conflict
+        mock_graph_store.get_ontology_version = AsyncMock(return_value=None)
+
         version_data = {
-        "version": "v3.0",
+        "version": "v3.0.0",
         "change_summary": "Major update",
         "changes": [
-            {"type": "added", "entity_type": "NewEntity"},
+            "Added new entity types",
         ],
-        "created_by": "test-user",
         }
 
         response = client.post(
@@ -443,20 +451,20 @@ class TestOntologyVersioning:
 
         assert response.status_code == 201
         data = response.json()
-        assert data["version"] == "v3.0"
+        assert data["version"] == "v3.0.0"
         assert data["change_summary"] == "Major update"
         mock_graph_store.create_ontology_version.assert_called_once()
 
     def test_create_ontology_version_conflict(self, client, mock_graph_store):
         """Test creating an ontology version that already exists."""
         mock_graph_store.get_ontology_version = AsyncMock(return_value={
-        "version": "v2.0",
+        "version": "v2.0.0",
         "is_active": True,
         })
 
         response = client.post(
             "/api/v1/ontology/versions",
-            json={"version": "v2.0", "change_summary": "Update"},
+            json={"version": "v2.0.0", "change_summary": "Update"},
         )
 
         assert response.status_code == 409
@@ -509,34 +517,54 @@ class TestAuditIntegration:
 
     def test_audit_logged_on_create(self, client, mock_graph_store):
         """Test that audit events are logged on entity type creation."""
+        # Ensure get_entity_type_by_name returns None for the new entity
+        mock_graph_store.get_entity_type_by_name = AsyncMock(return_value=None)
+
         with patch("app.api.routes.ontology.AuditLogger") as mock_audit:
+            mock_audit_instance = MagicMock()
+            mock_audit_instance.log_event = AsyncMock()
+            mock_audit.return_value = mock_audit_instance
+
             response = client.post(
                 "/api/v1/ontology/entity-types",
-                json={"name": "NewEntity", "description": "New entity"},
+                json={"name": "NEW_ENTITY", "description": "New entity"},
             )
 
             assert response.status_code == 201
             assert mock_audit.called
-            # Audit logger should have been instantiated
-            assert mock_audit.return_value.log_event.called
+            mock_audit.return_value.log_event.assert_called()
 
     def test_audit_logged_on_update(self, client, mock_graph_store):
         """Test that audit events are logged on entity type update."""
         with patch("app.api.routes.ontology.AuditLogger") as mock_audit:
+            mock_audit_instance = MagicMock()
+            mock_audit_instance.log_event = AsyncMock()
+            mock_audit.return_value = mock_audit_instance
+
             response = client.put(
-                "/api/v1/ontology/entity-types/CustomEntity",
+                "/api/v1/ontology/entity-types/CUSTOM_ENTITY",
                 json={"description": "Updated"},
             )
 
             assert response.status_code == 200
             assert mock_audit.called
+            mock_audit.return_value.log_event.assert_called()
 
     def test_audit_logged_on_delete(self, client, mock_graph_store):
         """Test that audit events are logged on entity type deletion."""
         mock_graph_store.count_entity_instances = AsyncMock(return_value=0)
+        mock_graph_store.get_entity_type_by_name = AsyncMock(return_value={
+            "name": "CUSTOM_ENTITY",
+            "is_builtin": False,
+        })
 
         with patch("app.api.routes.ontology.AuditLogger") as mock_audit:
-            response = client.delete("/api/v1/ontology/entity-types/CustomEntity")
+            mock_audit_instance = MagicMock()
+            mock_audit_instance.log_event = AsyncMock()
+            mock_audit.return_value = mock_audit_instance
+
+            response = client.delete("/api/v1/ontology/entity-types/CUSTOM_ENTITY")
 
             assert response.status_code == 204
             assert mock_audit.called
+            mock_audit.return_value.log_event.assert_called()

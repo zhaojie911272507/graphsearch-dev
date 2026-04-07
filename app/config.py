@@ -30,8 +30,8 @@ class AppSettings(BaseSettings):
     app_env: AppEnvironment = Field(default=AppEnvironment.DEVELOPMENT)
     app_debug: bool = Field(default=False)
 
-    # Rate limiting
-    rate_limit_enabled: bool = Field(default=True, description="Enable API rate limiting")
+    # Rate limiting (off by default; enable in production via env)
+    rate_limit_enabled: bool = Field(default=False, description="Enable API rate limiting")
     rate_limit_requests_per_minute: int = Field(default=60, ge=10, le=1000, description="Max requests per minute per IP")
     rate_limit_burst: int = Field(default=10, ge=1, le=100, description="Burst allowance for rate limiting")
 

@@ -13,6 +13,7 @@ import structlog
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, Response
+from prometheus_client import CONTENT_TYPE_LATEST
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.api.routes import (
@@ -52,8 +53,10 @@ logger = structlog.get_logger(__name__)
 
 def _configure_logging(settings: Settings) -> None:
     """Configure structlog and stdlib logging."""
-    # Use enhanced logging with trace context
-    setup_enhanced_logging(debug=settings.app.app_debug)
+    setup_enhanced_logging(
+        debug=settings.app.app_debug,
+        log_level=settings.app.log_level,
+    )
 
 
 # Simple in-memory rate limiter middleware
@@ -121,11 +124,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     settings = get_settings()
     _configure_logging(settings)
 
-    # Initialize OpenTelemetry tracing
     TracingSetup.initialize(settings)
 
     log = structlog.get_logger("lifespan")
     await log.ainfo("Starting Graph RAG system", env=settings.app.app_env)
+
+    TracingSetup.instrument_app(app)
 
     # Embedding service (singleton)
     embedding_service = EmbeddingService(settings.embedding)
@@ -214,14 +218,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     app.state.graph_store = graph_store
     app.state.graph_extractor = graph_extractor
 
-    # Add rate limiting middleware
-    if settings.app.rate_limit_enabled:
-        app.add_middleware(
-            RateLimitMiddleware,
-            requests_per_minute=settings.app.rate_limit_requests_per_minute,
-            burst=settings.app.rate_limit_burst,
-        )
-
     await log.ainfo("Graph RAG system ready")
 
     yield
@@ -235,6 +231,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
 
     await graph_store.__aexit__(None, None, None)
     EmbeddingService.reset()
+    TracingSetup.shutdown()
     await log.ainfo("Shutdown complete")
 
 
@@ -259,6 +256,13 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    if settings.app.rate_limit_enabled:
+        app.add_middleware(
+            RateLimitMiddleware,
+            requests_per_minute=settings.app.rate_limit_requests_per_minute,
+            burst=settings.app.rate_limit_burst,
+        )
 
     # Root redirect to visualization
     @app.get("/", include_in_schema=False)
@@ -313,9 +317,6 @@ def create_app() -> FastAPI:
     @app.get("/metrics", tags=["Observability"])
     async def metrics():
         """Prometheus metrics endpoint."""
-        from fastapi.responses import Response
-        from prometheus_client import CONTENT_TYPE_LATEST
-
         settings = get_settings()
         if not settings.observability.metrics_enabled:
             return Response(status_code=503, content="Metrics disabled")
@@ -324,9 +325,6 @@ def create_app() -> FastAPI:
             content=MetricsRegistry.generate_metrics(),
             media_type=CONTENT_TYPE_LATEST,
         )
-
-    # Instrument FastAPI with OpenTelemetry
-    TracingSetup.instrument_app(app)
 
     return app
 

@@ -16,7 +16,7 @@ class MetricsRegistry:
 
     _registry: ClassVar[CollectorRegistry] = CollectorRegistry()
 
-    # HTTP Metrics
+    # HTTP Metrics (auto-collected by middleware)
     http_requests_total: ClassVar[Counter] = Counter(
         "http_requests_total",
         "Total number of HTTP requests",

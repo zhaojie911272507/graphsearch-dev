@@ -32,8 +32,8 @@ def get_span_id() -> str | None:
 def trace_context_processor(
     logger: logging.Logger,
     method_name: str,
-    event_dict: dict,
-) -> dict:
+    event_dict: structlog.types.EventDict,
+) -> structlog.types.EventDict:
     """Add trace_id and span_id to log events."""
     trace_id = get_trace_id()
     span_id = get_span_id()
@@ -46,8 +46,10 @@ def trace_context_processor(
     return event_dict
 
 
-def setup_enhanced_logging(debug: bool = False) -> None:
+def setup_enhanced_logging(debug: bool = False, log_level: str = "INFO") -> None:
     """Configure structlog with trace context propagation."""
+    level = getattr(logging, log_level.upper(), logging.INFO)
+
     processors = [
         structlog.contextvars.merge_contextvars,
         structlog.processors.add_log_level,
@@ -64,7 +66,7 @@ def setup_enhanced_logging(debug: bool = False) -> None:
 
     structlog.configure(
         processors=processors,
-        wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
+        wrapper_class=structlog.make_filtering_bound_logger(level),
         context_class=dict,
         logger_factory=structlog.PrintLoggerFactory(),
         cache_logger_on_first_use=True,

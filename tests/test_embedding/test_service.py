@@ -171,24 +171,25 @@ class TestEmbeddingCache:
         service._model = MagicMock()
         return service
 
-    def test_cache_eviction_lru(self, mock_service_with_cache):
-        """Test LRU eviction when cache is full."""
+    @pytest.mark.asyncio
+    async def test_cache_eviction_lru(self, mock_service_with_cache):
+        """Test LRU eviction when cache is full (via embed_documents)."""
         service = mock_service_with_cache
+        service._cache_max_size = 2
+        service._cache.clear()
 
-        # Add first entry
-        service._cache["key1"] = [0.1] * 1024
-        # Add second entry
-        service._cache["key2"] = [0.2] * 1024
-        # Cache is now full
+        vectors = ([[0.1] * 1024], [[0.2] * 1024], [[0.3] * 1024])
+        service._model.encode.side_effect = list(vectors)
 
-        # Add third entry (should evict key1)
-        service._cache["key3"] = [0.3] * 1024
+        await service.embed_documents(["text-a"])
+        await service.embed_documents(["text-b"])
+        await service.embed_documents(["text-c"])
 
-        # key1 should be evicted
-        assert "key1" not in service._cache
-        # key2 and key3 should remain
-        assert "key2" in service._cache
-        assert "key3" in service._cache
+        keys = list(service._cache.keys())
+        assert len(keys) == 2
+        assert str(hash("text-a")) not in service._cache
+        assert str(hash("text-b")) in service._cache
+        assert str(hash("text-c")) in service._cache
 
     def test_cache_key_generation(self, mock_service_with_cache):
         """Test cache key is generated from text hash."""

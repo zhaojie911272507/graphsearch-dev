@@ -127,7 +127,7 @@ def mock_graph_store():
         "annotation_id": str(uuid4()),
         "user_id": "current_user",
         "vote_type": "upvote",
-        "comment": "Good annotation",
+        "comment": "Helpful annotation",
         "created_at": "2026-03-26T00:00:00Z",
     })
 
@@ -172,7 +172,7 @@ class TestAssetCatalog:
         """Test listing assets with filters."""
         response = client.get(
             "/api/v1/metadata/assets"
-            "?type=Entity&entity_type=TECHNOLOGY&q=neo4j&tags=database,graph"
+            "?type=Entity&entity_type=TECHNOLOGY&q=neo4j&tags=database&tags=graph"
             "&page=1&page_size=10&sort_by=name&order=asc"
         )
 
@@ -254,7 +254,9 @@ class TestLineageTracking:
         mock_graph_store.get_node_lineage.assert_called_once_with(
             node_id,
             direction="upstream",
-            max_depth=3,
+            max_depth=None,
+            node_types=None,
+            relation_types=None,
         )
 
     def test_get_node_lineage_downstream_only(self, client, mock_graph_store):
@@ -267,7 +269,9 @@ class TestLineageTracking:
         mock_graph_store.get_node_lineage.assert_called_once_with(
             node_id,
             direction="downstream",
-            max_depth=3,
+            max_depth=None,
+            node_types=None,
+            relation_types=None,
         )
 
     def test_get_node_lineage_custom_depth(self, client, mock_graph_store):
@@ -281,6 +285,8 @@ class TestLineageTracking:
             node_id,
             direction="both",
             max_depth=5,
+            node_types=None,
+            relation_types=None,
         )
 
 

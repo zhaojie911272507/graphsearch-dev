@@ -9,10 +9,10 @@ class ObservabilitySettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="", env_file=".env", extra="ignore")
 
-    # OpenTelemetry
-    otel_enabled: bool = Field(default=True, description="Enable OpenTelemetry tracing")
+    # OpenTelemetry (off by default; enable in .env when Tempo/OTLP is available)
+    otel_enabled: bool = Field(default=False, description="Enable OpenTelemetry tracing")
     otel_exporter_otlp_endpoint: str = Field(
-        default="http://tempo:4318",
+        default="http://localhost:4318",
         description="OTLP HTTP endpoint for Tempo",
     )
     otel_traces_sampler: str = Field(
@@ -40,7 +40,9 @@ class ObservabilitySettings(BaseSettings):
     webhook_alert_url: str = Field(default="", description="Webhook URL for alert notifications")
 
     # Query performance monitoring
-    slow_query_threshold_ms: float = Field(default=1000.0, ge=100, description="Threshold in ms for slow query logging")
+    slow_query_threshold_ms: float = Field(
+        default=1000.0, ge=100, description="Threshold in ms for slow query logging"
+    )
     log_slow_queries: bool = Field(default=True, description="Enable slow query logging")
 
 

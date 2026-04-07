@@ -19,6 +19,7 @@ def client(mock_graph_store):
 def mock_graph_store():
     """Mock GraphStore for evaluation operations."""
     store = AsyncMock()
+    store._settings = MagicMock()
     store.get_evaluation_metrics = AsyncMock(return_value={
         "metrics": {
             "precision": {"value": 0.72, "trend": "up"},
@@ -32,20 +33,21 @@ def mock_graph_store():
         "vector_only": {
             "precision": {"value": 0.65},
             "recall": {"value": 0.71},
+            "faithfulness": {"value": 0.80},
+            "relevance": {"value": 0.75},
         },
         "hybrid": {
             "precision": {"value": 0.72},
             "recall": {"value": 0.81},
-        },
-        "improvement": {
-            "precision": 10.8,
-            "recall": 14.1,
+            "faithfulness": {"value": 0.85},
+            "relevance": {"value": 0.78},
         },
     })
     store.get_query_evaluations = AsyncMock(return_value=[])
     store.get_pipeline_configs = AsyncMock(return_value=[])
     store.create_pipeline_config = AsyncMock(return_value={})
     store.activate_pipeline_config = AsyncMock(return_value=True)
+    store.get_pipeline_config = AsyncMock(return_value=None)
     store.get_prompt_templates = AsyncMock(return_value=[])
     store.create_prompt_template = AsyncMock(return_value={})
     return store
@@ -94,8 +96,8 @@ class TestAblationStudy:
         assert "improvement" in data
 
         # Check improvement calculations
-        assert data["improvement"]["precision"] == 10.8
-        assert data["improvement"]["recall"] == 14.1
+        assert data["improvement"]["precision"] == pytest.approx(10.77)
+        assert data["improvement"]["recall"] == pytest.approx(14.08, abs=0.02)
 
     def test_ablation_study_metrics_present(self, client, mock_graph_store):
         """Test that all expected metrics are present in ablation study."""
@@ -113,15 +115,16 @@ class TestQueryEvaluations:
     def test_get_query_evaluations_default(self, client, mock_graph_store):
         """Test getting individual query evaluations with defaults."""
         mock_graph_store.get_query_evaluations.return_value = [
-        {
-            "id": "eval-1",
-            "question": "What is Graph RAG?",
-            "context_precision": 0.8,
-            "context_recall": 0.9,
-        }
+            {
+                "id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                "query_text": "What is Graph RAG?",
+                "context_precision": 0.8,
+                "context_recall": 0.9,
+                "created_at": "2026-03-26T00:00:00Z",
+            }
         ]
 
-        response = client.get("/api/v1/evaluation/query-evaluations")
+        response = client.get("/api/v1/evaluation/queries")
 
         assert response.status_code == 200
         data = response.json()
@@ -131,7 +134,7 @@ class TestQueryEvaluations:
     def test_get_query_evaluations_filtered(self, client, mock_graph_store):
         """Test getting query evaluations with filters."""
         response = client.get(
-            "/api/v1/evaluation/query-evaluations?days=14&min_precision=0.7&limit=50"
+            "/api/v1/evaluation/queries?days=14&min_precision=0.7&limit=50"
         )
 
         assert response.status_code == 200
@@ -146,34 +149,48 @@ class TestPipelineConfigs:
     def test_get_pipeline_configs(self, client, mock_graph_store):
         """Test retrieving all pipeline configurations."""
         mock_graph_store.get_pipeline_configs.return_value = [
-        {
-            "version": "v1.0",
-            "is_active": True,
-            "created_at": "2026-03-24T00:00:00Z",
-        },
-        {
-            "version": "v1.1",
-            "is_active": False,
-            "created_at": "2026-03-23T00:00:00Z",
-        },
+            {
+                "version": "v1.0.0",
+                "is_active": True,
+                "created_at": "2026-03-24T00:00:00Z",
+                "created_by": "admin",
+                "retrieval": {},
+                "generation": {},
+            },
+            {
+                "version": "v1.1.0",
+                "is_active": False,
+                "created_at": "2026-03-23T00:00:00Z",
+                "created_by": "admin",
+                "retrieval": {},
+                "generation": {},
+            },
         ]
 
         response = client.get("/api/v1/evaluation/pipeline/configs")
 
         assert response.status_code == 200
         data = response.json()
-        assert len(data) == 2
-        assert data[0]["version"] == "v1.0"
-        assert data[0]["is_active"] is True
+        assert len(data["configs"]) == 2
+        assert data["configs"][0]["version"] == "v1.0.0"
+        assert data["configs"][0]["is_active"] is True
 
     def test_create_pipeline_config(self, client, mock_graph_store):
         """Test creating a new pipeline configuration."""
         config_data = {
-        "version": "v2.0",
-        "retrieval": {"top_k": 10, "use_hybrid": True},
-        "generation": {"model": "gpt-4", "temperature": 0.7},
-        "created_by": "test-user",
-        "change_summary": "Added hybrid retrieval",
+            "version": "v2.0.0",
+            "retrieval": {"top_k": 10, "use_hybrid": True},
+            "generation": {"model": "gpt-4", "temperature": 0.7},
+            "change_summary": "Added hybrid retrieval",
+        }
+
+        mock_graph_store.create_pipeline_config.return_value = {
+            "version": "v2.0.0",
+            "retrieval": config_data["retrieval"],
+            "generation": config_data["generation"],
+            "created_by": "current_user",
+            "created_at": "2026-03-26T00:00:00Z",
+            "is_active": False,
         }
 
         response = client.post(
@@ -181,30 +198,44 @@ class TestPipelineConfigs:
             json=config_data,
         )
 
-        assert response.status_code == 200
+        assert response.status_code == 201
         mock_graph_store.create_pipeline_config.assert_called_once()
 
     def test_activate_pipeline_config(self, client, mock_graph_store):
         """Test activating a pipeline configuration."""
+        mock_graph_store.get_pipeline_config.return_value = {
+            "version": "v2.0.0",
+            "is_active": False,
+        }
+
         response = client.post(
-            "/api/v1/evaluation/pipeline/configs/v2.0/activate"
+            "/api/v1/evaluation/pipeline/configs/v2.0.0/activate"
         )
 
         assert response.status_code == 200
-        assert response.json() is True
-        mock_graph_store.activate_pipeline_config.assert_called_once_with("v2.0")
+        assert response.json() == {
+            "success": True,
+            "message": "Activated pipeline config v2.0.0",
+        }
+        mock_graph_store.activate_pipeline_config.assert_called_once_with("v2.0.0")
 
 
 class TestPromptTemplates:
     def test_get_prompt_templates_all(self, client, mock_graph_store):
         """Test retrieving all prompt templates."""
         mock_graph_store.get_prompt_templates.return_value = [
-        {
-            "id": "template-1",
-            "template_type": "retrieval",
-            "content": "Retrieve relevant context...",
-            "is_active": True,
-        }
+            {
+                "id": "550e8400-e29b-41d4-a716-446655440000",
+                "name": "retrieval-default",
+                "template_type": "retrieval",
+                "content": "Retrieve relevant context...",
+                "variables": [],
+                "version": "v1.0.0",
+                "is_active": True,
+                "created_at": "2026-03-24T00:00:00Z",
+                "updated_at": "2026-03-24T00:00:00Z",
+                "created_by": "admin",
+            }
         ]
 
         response = client.get("/api/v1/evaluation/prompts")
@@ -225,10 +256,24 @@ class TestPromptTemplates:
     def test_create_prompt_template(self, client, mock_graph_store):
         """Test creating a new prompt template."""
         template_data = {
-        "template_type": "generation",
-        "content": "Generate answer based on context...",
-        "variables": ["context", "question"],
-        "created_by": "test-user",
+            "name": "generation-default",
+            "template_type": "generation",
+            "content": "Generate answer based on context...",
+            "variables": ["context", "question"],
+            "version": "v1.0.0",
+        }
+
+        mock_graph_store.create_prompt_template.return_value = {
+            "id": "650e8400-e29b-41d4-a716-446655440001",
+            "name": template_data["name"],
+            "template_type": template_data["template_type"],
+            "content": template_data["content"],
+            "variables": template_data["variables"],
+            "version": template_data["version"],
+            "is_active": False,
+            "created_at": "2026-03-26T00:00:00Z",
+            "updated_at": "2026-03-26T00:00:00Z",
+            "created_by": "current_user",
         }
 
         response = client.post(
@@ -236,7 +281,7 @@ class TestPromptTemplates:
             json=template_data,
         )
 
-        assert response.status_code == 200
+        assert response.status_code == 201
         mock_graph_store.create_prompt_template.assert_called_once()
 
 

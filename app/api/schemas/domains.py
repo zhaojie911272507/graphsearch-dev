@@ -77,6 +77,10 @@ class DomainUpdateSchema(BaseModel):
 
     name: str | None = None
     description: str | None = None
+    extraction_prompt_template: str | None = Field(
+        default=None,
+        description="Optional per-domain extraction prompt override",
+    )
     parent_domain_key: str | None = None
     inherits_base_ontology: bool | None = None
 
