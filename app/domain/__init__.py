@@ -1,7 +1,5 @@
 """Domain layer — core ontology models and schemas."""
 
-from app.domain.audit import AuditAction, AuditEvent
-from app.domain.domains import Domain, DomainConfig, DomainMetadata
 from app.domain.enums import EntityType, NodeType, RelationType
 from app.domain.nodes import (
     BaseNode,
@@ -21,23 +19,8 @@ from app.domain.schemas import (
     QueryResponse,
     RetrievalContext,
 )
-from app.domain.temporal import (
-    EntitySummary,
-    EntityVersion,
-    GlobalSummary,
-    RelationshipSnapshot,
-    RelationshipSummary,
-    TemporalNode,
-)
 
 __all__ = [
-    # Audit
-    "AuditAction",
-    "AuditEvent",
-    # Domains
-    "Domain",
-    "DomainConfig",
-    "DomainMetadata",
     # Nodes
     "BaseNode",
     "ChunkNode",
@@ -59,11 +42,4 @@ __all__ = [
     "QueryRequest",
     "QueryResponse",
     "RetrievalContext",
-    # Temporal
-    "EntitySummary",
-    "EntityVersion",
-    "GlobalSummary",
-    "RelationshipSnapshot",
-    "RelationshipSummary",
-    "TemporalNode",
 ]

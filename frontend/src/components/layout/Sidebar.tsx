@@ -2,22 +2,12 @@ import { Link, useLocation } from 'react-router-dom'
 import { cn } from '@/lib/utils'
 import {
   Database,
-  GitBranch,
   Users,
-  Map,
-  BarChart3,
   Settings,
   Home,
   Network,
-  GitCommitHorizontal,
-  Folder,
   FileText,
-  LineChart,
-  MessageSquare,
-  Play,
-  Gauge,
   Search,
-  Clock,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -36,30 +26,6 @@ const mainNav: NavItem[] = [
   { name: '文档管理', href: '/documents', icon: FileText },
   { name: '图谱可视化', href: '/graph', icon: Network },
   { name: '图谱问答', href: '/graph/query', icon: Search },
-  { name: '时序查询', href: '/temporal', icon: Clock },
-  { name: '时序统计', href: '/temporal/stats', icon: LineChart },
-]
-
-// 领域与本体
-const domainNav: NavItem[] = [
-  { name: '领域管理', href: '/domains', icon: Folder },
-  { name: '本体管理', href: '/ontology', icon: GitBranch },
-  { name: '血缘追踪', href: '/lineage', icon: GitCommitHorizontal },
-]
-
-// 模拟功能
-const simulationNav: NavItem[] = [
-  { name: '模拟执行', href: '/simulation', icon: Play },
-  { name: '报告分析', href: '/simulation/reports', icon: LineChart },
-  { name: '深度对话', href: '/simulation/dialogue', icon: MessageSquare },
-]
-
-// 协作与监控
-const collaborationNav: NavItem[] = [
-  { name: '协作审核', href: '/review', icon: Users },
-  { name: '探索路径', href: '/explorations', icon: Map },
-  { name: '评估监控', href: '/evaluation', icon: BarChart3 },
-  { name: '管道配置', href: '/pipeline', icon: Gauge },
   { name: '系统设置', href: '/settings', icon: Settings },
 ]
 
@@ -137,9 +103,6 @@ export function Sidebar({ className }: SidebarProps) {
       {/* 导航 */}
       <nav className="flex flex-1 flex-col overflow-y-auto">
         <NavSection title="主要功能" items={mainNav} location={location} />
-        <NavSection title="领域管理" items={domainNav} location={location} />
-        <NavSection title="社会模拟" items={simulationNav} location={location} />
-        <NavSection title="协作监控" items={collaborationNav} location={location} />
       </nav>
 
       {/* 底部信息 */}
